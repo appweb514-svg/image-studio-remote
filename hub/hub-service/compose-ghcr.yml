@@ -4,8 +4,11 @@ services:
   studio-hub:
     image: ghcr.io/appweb514-svg/studio-hub:latest
     restart: unless-stopped
-    network_mode: host
+    ports:
+      - "8000:8000"
     environment:
+      # URLs du worker mflux (Mac mini), essayées dans l'ordre :
+      # NetBird puis IP LAN (à compléter avec l'IP LAN de la mini).
       WORKER_URL: http://100.102.122.144:8899
       WORKER_TOKEN: klein-4b
       ADMIN_USER: gildas
@@ -14,6 +17,12 @@ services:
       WEBUI_DIST: /srv/webui
     volumes:
       - studio-data:/data
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.imgstudio.rule=Host(`imgstudio.int.labvirtuel.fr`)
+      - traefik.http.routers.imgstudio.entrypoints=web
+      - traefik.http.routers.imgstudio.service=imgstudio
+      - traefik.http.services.imgstudio.loadbalancer.server.port=8000
 
 volumes:
   studio-data:
