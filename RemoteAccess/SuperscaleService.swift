@@ -337,9 +337,9 @@ final class SuperscaleService {
                 keepWarm: settingsRef.superscaleKeepWarm,
                 faceEnhance: request.faceEnhance
             ) { [weak self] pipeline in
-                pipeline.onProgress = { progress in
+                pipeline.onProgress = { message in
                     Task { @MainActor [weak self] in
-                        self?.handleProgress(job.id, progress)
+                        self?.handleProgress(job.id, message)
                     }
                 }
                 try pipeline.process(
@@ -382,20 +382,29 @@ final class SuperscaleService {
 
     private var pendingRequests: [UUID: UpscaleRequest] = [:]
 
-    private func handleProgress(_ id: UUID, _ progress: SuperscaleKit.PipelineProgress) {
-        let phase = "\(progress)"
+    /// v1.0.7 reports progress as human-readable strings; the tile counts are
+    /// recovered with a regex ("Processing tile N of M...").
+    private func handleProgress(_ id: UUID, _ message: String) {
         mutate(id) { job in
-            job.phase = phase
+            job.phase = message
         }
-        if case let .tiling(done, total) = progress {
-            mutate(id) {
-                $0.tilesDone = done
-                $0.tilesTotal = total
-            }
-            bus.emit(.upscaleProgress(jobID: id.uuidString, phase: phase, tilesDone: done, tilesTotal: total))
-        } else {
-            bus.emit(.upscaleProgress(jobID: id.uuidString, phase: phase, tilesDone: 0, tilesTotal: 0))
+        let tileRegex = try? NSRegularExpression(pattern: "tile (\\d+) of (\\d+)", options: .caseInsensitive)
+        var done = 0
+        var total = 0
+        if let tileRegex,
+           let match = tileRegex.firstMatch(in: message, range: NSRange(message.startIndex..., in: message)),
+           match.numberOfRanges == 3,
+           let doneRange = Range(match.range(at: 1), in: message),
+           let totalRange = Range(match.range(at: 2), in: message),
+           let d = Int(message[doneRange]), let t = Int(message[totalRange]) {
+            done = d
+            total = t
         }
+        mutate(id) {
+            $0.tilesDone = done
+            $0.tilesTotal = total
+        }
+        bus.emit(.upscaleProgress(jobID: id.uuidString, phase: message, tilesDone: done, tilesTotal: total))
     }
 
     /// Enqueue an upscale with full options.

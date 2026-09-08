@@ -61,7 +61,8 @@ export interface OkResponse {
 }
 
 export const api = {
-  login: (token: string) => post<OkResponse>("/auth/login", { token }),
+  login: (username: string, password: string) =>
+    post<OkResponse>("/auth/login", { username, password }),
   logout: () => post<OkResponse>("/auth/logout"),
 
   status: () => get<import("./types").SystemStatus>("/status"),

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { useEvents } from "../sse";
@@ -204,6 +204,7 @@ export function GalleryPage() {
           <button
             key={item.id}
             className="gallery-item"
+            style={{ "--i": Math.min(i, 14) } as CSSProperties}
             onClick={() => {
               setViewerIndex(i);
               setZoom(1);

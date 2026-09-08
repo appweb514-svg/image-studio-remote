@@ -29,7 +29,7 @@ settings:
 packages:
   Superscale:
     url: https://github.com/tigger-developer/superscale.git
-    from: 1.0.7
+    exactVersion: 1.0.7
 
 targets:
   MLXBits Image Studio:

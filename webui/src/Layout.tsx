@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "./auth";
+import { Aurora, Monogram } from "./components/Aurora";
 
 const NAV = [
   { to: "/", label: "Générer", icon: "✨", end: true },
@@ -11,7 +12,7 @@ const NAV = [
 ];
 
 export function Layout() {
-  const { logout } = useAuth();
+  const { logout, username } = useAuth();
   const location = useLocation();
 
   useEffect(() => {
@@ -21,30 +22,49 @@ export function Layout() {
 
   return (
     <div className="layout">
-      <header className="topbar">
-        <span className="brand">MLXBits <strong>Image Studio</strong></span>
-        <button className="btn btn-ghost" onClick={() => void logout()}>
-          Déconnexion
-        </button>
+      <Aurora />
+      <header className="topbar glass">
+        <span className="brand">
+          <Monogram size={26} />
+          <span className="brand-text">
+            MLXBits <strong>Image Studio</strong>
+          </span>
+        </span>
+        <span className="topbar-chip tnum">
+          {username ?? "Hub"}
+        </span>
       </header>
       <div className="body">
-        <nav className="sidebar">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
-            >
+        <nav className="sidebar glass">
+          <div className="nav-items">
+            {NAV.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}
+              >
+                <span className="nav-indicator" aria-hidden />
+                <span className="nav-icon" aria-hidden>
+                  {item.icon}
+                </span>
+                <span>{item.label}</span>
+              </NavLink>
+            ))}
+          </div>
+          <div className="sidebar-footer">
+            <button className="nav-logout" onClick={() => void logout()}>
               <span className="nav-icon" aria-hidden>
-                {item.icon}
+                ⎋
               </span>
-              <span>{item.label}</span>
-            </NavLink>
-          ))}
+              <span>Déconnexion</span>
+            </button>
+          </div>
         </nav>
-        <main className="main">
-          <Outlet />
+        <main className="main" key={location.pathname}>
+          <div className="page-enter">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

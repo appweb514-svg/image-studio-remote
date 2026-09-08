@@ -9,7 +9,12 @@ const LABELS: Record<JobStatus, string> = {
 };
 
 export function StatusBadge({ status }: { status: JobStatus }) {
-  return <span className={`badge badge-${status}`}>{LABELS[status] ?? status}</span>;
+  return (
+    <span className={`badge badge-${status}`}>
+      <span className="status-dot" aria-hidden />
+      {LABELS[status] ?? status}
+    </span>
+  );
 }
 
 const UPSCALE_LABELS: Record<UpscaleJobStatus, string> = {
@@ -20,5 +25,10 @@ const UPSCALE_LABELS: Record<UpscaleJobStatus, string> = {
 };
 
 export function UpscaleStatusBadge({ status }: { status: UpscaleJobStatus }) {
-  return <span className={`badge badge-up-${status}`}>{UPSCALE_LABELS[status] ?? status}</span>;
+  return (
+    <span className={`badge badge-up-${status}`}>
+      <span className="status-dot" aria-hidden />
+      {UPSCALE_LABELS[status] ?? status}
+    </span>
+  );
 }

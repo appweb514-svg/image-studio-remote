@@ -3,6 +3,7 @@ import { api, ApiError } from "../api";
 import { useEvents } from "../sse";
 import { useToast } from "../components/Toast";
 import { ProgressBar } from "../components/ProgressBar";
+import { Particles } from "../components/Aurora";
 import type { Capabilities, GenerateRequest, ModelInfo, Presets } from "../types";
 
 const TARGET_MPS = [0.25, 0.5, 1.0];
@@ -22,6 +23,7 @@ interface LiveJob {
   statusLine?: string;
   startedAt: number;
   previewSrc?: string;
+  previewPrev?: string;
 }
 
 function roundTo(value: number, multiple: number): number {
@@ -304,24 +306,31 @@ export function GeneratePage() {
         const e = p as { job_id: string; jpeg_base64: string };
         setLive((prev) =>
           prev && prev.id === e.job_id
-            ? { ...prev, previewSrc: `data:image/jpeg;base64,${e.jpeg_base64}` }
+            ? {
+                ...prev,
+                previewPrev: prev.previewSrc,
+                previewSrc: `data:image/jpeg;base64,${e.jpeg_base64}`,
+              }
             : prev,
         );
       },
       jobCompleted: (p) => {
         const e = p as { job_id: string };
-        setLive((prev) => (prev && prev.id === e.job_id ? prev : prev));
+        setLive((prev) => (prev && prev.id === e.job_id ? null : prev));
         setResultSrc(`/api/v1/jobs/${encodeURIComponent(e.job_id)}/preview?${Date.now()}`);
         toast("Génération terminée", "success");
       },
       jobFailed: (p) => {
         const e = p as { job_id: string; message: string };
-        setLive((prev) => (prev && prev.id === e.job_id ? prev : prev));
+        setLive((prev) => (prev && prev.id === e.job_id ? null : prev));
         toast(`Échec : ${e.message}`, "error");
       },
       jobCancelled: (p) => {
         const e = p as { job_id: string };
-        if (liveIdRef.current === e.job_id) toast("Génération annulée", "info");
+        if (liveIdRef.current === e.job_id) {
+          toast("Génération annulée", "info");
+          setLive(null);
+        }
       },
       modelLoading: (p) => toast(`Chargement du modèle : ${(p as { label: string }).label}`, "info"),
       modelLoaded: (p) =>
@@ -357,7 +366,7 @@ export function GeneratePage() {
     <div className="page">
       <h1>Générer</h1>
       <div className="generate-grid">
-        <form className="card form" onSubmit={submit}>
+        <form className="card glass form" onSubmit={submit}>
           {supportsEdit && (
             <div className="segmented" role="group" aria-label="Mode">
               <button
@@ -763,24 +772,48 @@ export function GeneratePage() {
           </button>
         </form>
 
-        <aside className="card live-card">
+        <aside className="card glass live-card">
           <h2>Suivi en direct</h2>
           {!live && !resultSrc && <p className="muted">Aucune génération en cours.</p>}
           {live && (
             <>
               <div className="live-head">
                 <span className="muted mono">#{live.id.slice(0, 8)}</span>
-                <span className="muted">
-                  Pas {live.step}/{live.totalSteps || "?"} · {elapsed}s
+                <span className="muted live-metrics">
+                  Pas <span className="tnum">{live.step}</span>/<span className="tnum">{live.totalSteps || "?"}</span> · <span className="tnum">{elapsed}</span>s
                 </span>
               </div>
               <ProgressBar
                 value={live.totalSteps > 0 ? (live.step / live.totalSteps) * 100 : 0}
                 indeterminate={live.totalSteps === 0}
+                glow
+                showPercent
               />
               {live.statusLine && <p className="status-line mono">{live.statusLine}</p>}
               <div className="live-preview">
-                {live.previewSrc && <img src={live.previewSrc} alt="Aperçu en cours" />}
+                <div className={`live-frame ${live.previewSrc ? "live-frame-active" : ""}`}>
+                  <Particles />
+                  <span className="glow-ring" aria-hidden />
+                  <div className="live-frame-inner">
+                    {live.previewPrev && live.previewSrc && (
+                      <img
+                        src={live.previewPrev}
+                        alt=""
+                        aria-hidden
+                        className="preview-frame preview-frame-under"
+                      />
+                    )}
+                    {live.previewSrc && (
+                      <img
+                        key={live.previewSrc}
+                        src={live.previewSrc}
+                        alt="Aperçu en cours"
+                        className="preview-frame"
+                      />
+                    )}
+                    {live.previewSrc && <span className="scanline" aria-hidden />}
+                  </div>
+                </div>
               </div>
               <button className="btn btn-danger" type="button" onClick={() => void cancelLive()}>
                 Annuler
@@ -790,9 +823,12 @@ export function GeneratePage() {
           {resultSrc && !live && (
             <div className="live-result">
               <p className="muted">Dernier résultat :</p>
-              <a href={resultSrc} target="_blank" rel="noreferrer">
-                <img src={resultSrc} alt="Résultat" />
-              </a>
+              <div className="reveal-frame">
+                <span className="reveal-ring" aria-hidden />
+                <a href={resultSrc} target="_blank" rel="noreferrer">
+                  <img src={resultSrc} alt="Résultat" className="reveal-img" />
+                </a>
+              </div>
             </div>
           )}
         </aside>

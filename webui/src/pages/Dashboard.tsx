@@ -1,17 +1,64 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { useEvents } from "../sse";
 import { useToast } from "../components/Toast";
-import { ProgressBar } from "../components/ProgressBar";
 import { UpscaleStatusBadge } from "../components/StatusBadge";
 import type { SystemStatus, UpscaleJobDTO } from "../types";
 
+/** Flash the value briefly whenever it changes. */
+function useFlash(value: string | number) {
+  const [flash, setFlash] = useState(false);
+  const prev = useRef(value);
+  useEffect(() => {
+    if (prev.current !== value) {
+      prev.current = value;
+      setFlash(true);
+      const t = window.setTimeout(() => setFlash(false), 800);
+      return () => window.clearTimeout(t);
+    }
+  }, [value]);
+  return flash;
+}
+
+function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+  const flash = useFlash(value);
+  return (
+    <div className="card glass metric-card">
+      <span className="metric-label">{label}</span>
+      <span className={`metric-value tnum ${flash ? "flash" : ""}`}>{value}</span>
+      {sub && <span className="metric-sub">{sub}</span>}
+    </div>
+  );
+}
+
 function Gauge({ value, label }: { value: number; label: string }) {
+  const uid = useId();
   const pct = Math.min(100, Math.max(0, value * 100));
+  const r = 30;
+  const circ = 2 * Math.PI * r;
   return (
     <div className="gauge">
-      <ProgressBar value={pct} />
-      <span className="muted">{label}</span>
+      <svg viewBox="0 0 72 72" className="gauge-svg" role="img" aria-label={label}>
+        <defs>
+          <linearGradient id={uid} x1="0" y1="0" x2="1" y2="1">
+            <stop stopColor="#7c3aed" />
+            <stop offset="1" stopColor="#22d3ee" />
+          </linearGradient>
+        </defs>
+        <circle cx="36" cy="36" r={r} className="gauge-track" />
+        <circle
+          cx="36"
+          cy="36"
+          r={r}
+          className="gauge-arc"
+          stroke={`url(#${uid})`}
+          style={{ strokeDasharray: circ, strokeDashoffset: circ * (1 - pct / 100) }}
+        />
+      </svg>
+      <div className="gauge-label">
+        <span className="tnum gauge-pct">{Math.round(pct)} %</span>
+        <span className="muted">{label}</span>
+      </div>
     </div>
   );
 }
@@ -63,22 +110,48 @@ export function DashboardPage() {
     [refresh, refreshUpscale],
   );
 
-  if (!status) return <div className="page"><h1>Tableau de bord</h1><p className="muted">Chargement…</p></div>;
+  if (!status)
+    return (
+      <div className="page">
+        <h1>Tableau de bord</h1>
+        <p className="muted">Chargement…</p>
+      </div>
+    );
 
   const s = status.system;
   const mem = s.memory;
   const pressure = mem.pressure_ratio;
+  const running =
+    status.queue.running_flux + status.queue.running_krea2 + status.queue.running_zimage;
 
   return (
     <div className="page">
       <div className="page-head">
         <h1>Tableau de bord</h1>
         <span className="badge badge-running">
-          {status.remoteAccess.connected_clients} client{status.remoteAccess.connected_clients > 1 ? "s" : ""}
+          <span className="status-dot" aria-hidden />
+          {status.remoteAccess.connected_clients} client
+          {status.remoteAccess.connected_clients > 1 ? "s" : ""}
         </span>
       </div>
+
+      <div className="metrics-row">
+        <Metric label="File d'attente" value={status.queue.pending} sub="travaux en attente" />
+        <Metric label="En cours" value={running} sub="générations actives" />
+        <Metric
+          label="Stockage libre"
+          value={`${s.storage.free_gb.toFixed(0)} Go`}
+          sub={`sur ${s.storage.total_gb.toFixed(0)} Go`}
+        />
+        <Metric
+          label="Mémoire"
+          value={`${mem.total_gb.toFixed(0)} Go`}
+          sub={mem.swap_used_gb !== undefined ? `swap ${mem.swap_used_gb.toFixed(1)} Go` : undefined}
+        />
+      </div>
+
       <div className="dash-grid">
-        <section className="card dash-card">
+        <section className="card glass dash-card">
           <h2>Machine</h2>
           <dl className="detail-grid">
             <dt>Puce</dt>
@@ -86,17 +159,9 @@ export function DashboardPage() {
               {s.chip}
               {s.chip_generation ? ` (${s.chip_generation})` : ""}
             </dd>
-            <dt>RAM totale</dt>
-            <dd>{mem.total_gb.toFixed(0)} Go</dd>
-            {mem.swap_used_gb !== undefined && (
-              <>
-                <dt>Swap utilisé</dt>
-                <dd>{mem.swap_used_gb.toFixed(1)} Go</dd>
-              </>
-            )}
-            <dt>Stockage libre</dt>
+            <dt>Stockage</dt>
             <dd>
-              {s.storage.free_gb.toFixed(0)} Go / {s.storage.total_gb.toFixed(0)} Go
+              {s.storage.free_gb.toFixed(0)} Go libres / {s.storage.total_gb.toFixed(0)} Go
             </dd>
           </dl>
           {pressure !== undefined && (
@@ -108,7 +173,7 @@ export function DashboardPage() {
           />
         </section>
 
-        <section className="card dash-card">
+        <section className="card glass dash-card">
           <h2>Modèle chargé</h2>
           {s.loaded_model ? (
             <dl className="detail-grid">
@@ -126,7 +191,7 @@ export function DashboardPage() {
           )}
         </section>
 
-        <section className="card dash-card">
+        <section className="card glass dash-card">
           <h2>File d'attente</h2>
           <dl className="detail-grid">
             <dt>En attente</dt>
@@ -142,7 +207,7 @@ export function DashboardPage() {
           </dl>
         </section>
 
-        <section className="card dash-card">
+        <section className="card glass dash-card">
           <h2>UpScaler</h2>
           {upJobs.length === 0 ? (
             <p className="muted">Aucun travail d'upscaling.</p>
@@ -168,7 +233,7 @@ export function DashboardPage() {
           )}
         </section>
 
-        <section className="card dash-card">
+        <section className="card glass dash-card">
           <h2>Versions</h2>
           <dl className="detail-grid">
             <dt>Application</dt>

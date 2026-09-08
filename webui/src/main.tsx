@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import { ToastProvider } from "./components/Toast";
+import { Aurora } from "./components/Aurora";
 import { Layout } from "./Layout";
 import { LoginScreen } from "./Login";
 import { GeneratePage } from "./pages/Generate";
@@ -17,6 +18,7 @@ function Gate() {
   if (checking) {
     return (
       <div className="login-screen">
+        <Aurora />
         <p className="muted">Chargement…</p>
       </div>
     );
