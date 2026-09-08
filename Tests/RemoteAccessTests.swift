@@ -18,17 +18,21 @@ struct RemoteAuthServiceTests {
     mutating func sessions() {
         var service = RemoteAuthService()
         let session = service.createSession()
-        #expect(service.validateSession(session))
+        let validBefore = service.validateSession(session)
         service.endSession(session)
-        #expect(!service.validateSession(session))
+        let validAfter = service.validateSession(session)
+        #expect(validBefore)
+        #expect(!validAfter)
     }
 
     @Test("Unknown sessions are rejected")
     mutating func unknownSession() {
         var service = RemoteAuthService()
         _ = service.createSession()
-        #expect(!service.validateSession("not-a-session"))
-        #expect(!service.validateSession(nil))
+        let unknown = service.validateSession("not-a-session")
+        let nilSession = service.validateSession(nil)
+        #expect(!unknown)
+        #expect(!nilSession)
     }
 
     @Test("Rate limiter allows up to the cap then blocks")
@@ -36,15 +40,19 @@ struct RemoteAuthServiceTests {
         var service = RemoteAuthService()
         let client = "192.168.1.10"
         for _ in 0..<RemoteAuthService.maxFailedAttempts {
-            #expect(service.checkRateLimit(client: client))
+            let allowed = service.checkRateLimit(client: client)
+            #expect(allowed)
             service.recordFailedAttempt(client: client)
         }
-        #expect(!service.checkRateLimit(client: client))
+        let blocked = service.checkRateLimit(client: client)
+        #expect(!blocked)
         // Another client is unaffected.
-        #expect(service.checkRateLimit(client: "192.168.1.11"))
+        let otherAllowed = service.checkRateLimit(client: "192.168.1.11")
+        #expect(otherAllowed)
         // Window expiry restores access.
         let future = Date().addingTimeInterval(RemoteAuthService.rateWindow + 1)
-        #expect(service.checkRateLimit(client: client, now: future))
+        let restored = service.checkRateLimit(client: client, now: future)
+        #expect(restored)
     }
 
     @Test("Tokens are URL-safe and unique")
