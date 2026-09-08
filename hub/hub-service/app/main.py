@@ -478,6 +478,12 @@ def image_dto(row):
     }
 
 
+@app.get("/api/v1/presets")
+def presets(request: Request):
+    require_auth(request)
+    return JSONResponse({"templates": [], "model_defaults": []})
+
+
 @app.get("/api/v1/images/{image_id}")
 def get_image(image_id: str, request: Request):
     require_auth(request)
