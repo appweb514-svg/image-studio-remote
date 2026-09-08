@@ -137,11 +137,11 @@ def run_job(job):
             log(f"job {job_id}: enhance échoué ({exc}), prompt d'origine")
 
     if fast_mode:
-        # Basse résolution : long bord plafonné à 512 (rapide), puis upscale.
+        # Basse résolution : long bord plafonné à 384 (rapide), puis upscale.
         w, h = int(params.get("width") or 512), int(params.get("height") or 512)
         longest = max(w, h)
-        if longest > 512:
-            scale_down = 512.0 / longest
+        if longest > 384:
+            scale_down = 384.0 / longest
             w, h = max(64, int(w * scale_down) // 8 * 8), max(64, int(h * scale_down) // 8 * 8)
         params = dict(params, width=w, height=h)
         log(f"job {job_id}: mode rapide {w}x{h} puis x{upscale_factor}")
