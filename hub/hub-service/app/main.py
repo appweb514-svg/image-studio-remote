@@ -144,39 +144,115 @@ def me(request: Request):
 
 # ------------------------------------------------------ proxied worker API
 
+# Réponses statiques quand le worker est injoignable : la Web UI construit
+# le formulaire de génération depuis /capabilities, et ne doit jamais
+# recevoir de 500 au boot.
+STATIC_CAPABILITIES = {
+    "families": [{"id": "flux", "display_name": "FLUX.2", "web_enqueue": True,
+                  "supports_edit": True, "max_edit_images": 4}],
+    "models": [
+        {"id": "flux2-klein-4b", "family": "flux", "display_name": "FLUX.2 Klein 4B",
+         "is_distilled": True, "default_steps": 4, "default_guidance": 1.0,
+         "supports_negative_prompt": False, "recommended_quantize": 8,
+         "approximate_size_gb": 4.6},
+        {"id": "flux2-klein-9b", "family": "flux", "display_name": "FLUX.2 Klein 9B",
+         "is_distilled": True, "default_steps": 4, "default_guidance": 1.0,
+         "supports_negative_prompt": False, "recommended_quantize": 8,
+         "approximate_size_gb": 9.8},
+    ],
+    "quantize_options": [0, 3, 4, 6, 8],
+    "batch_limits": {"min": 1, "max": 4},
+    "dimension_constraints": {"min_edge": 64, "max_edge": 2048, "multiple_of": 8},
+    "timing_estimate_available": False,
+}
+
+STATIC_MODELS = [
+    {"id": "flux2-klein-4b", "display_name": "FLUX.2 Klein 4B", "family": "flux",
+     "on_disk_q8": True, "on_disk_q4": True, "size_gb_q8": 8.2, "size_gb_q4": 4.6,
+     "repo_url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B"},
+    {"id": "flux2-klein-9b", "display_name": "FLUX.2 Klein 9B", "family": "flux",
+     "on_disk_q8": False, "on_disk_q4": True, "size_gb_q8": 17.6, "size_gb_q4": 9.8,
+     "repo_url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B"},
+]
+
 PASS_THROUGH_GET = ("/api/v1/status", "/api/v1/capabilities", "/api/v1/models",
                     "/api/v1/queue", "/api/v1/presets")
 
 
 @app.get("/api/v1/status")
 def status():
+    worker_payload = None
+    worker_error = None
     try:
         # Timeout court : la page de login doit s'afficher vite même si le
         # worker est injoignable.
         r = worker("GET", "/api/v1/status", timeout=4)
-        return JSONResponse(r.json())
+        if r.status_code == 200:
+            worker_payload = r.json()
     except Exception as exc:
-        return JSONResponse({
-            "app": "MLXBits Image Studio", "remoteAccess": {"is_running": False},
-            "system": {}, "queue": {},
-            "worker_error": str(exc),
-        })
+        worker_error = str(exc)
+
+    if worker_payload:
+        worker_payload["worker_online"] = True
+        return JSONResponse(worker_payload)
+
+    # Worker down : réponse complète quand même avec les infos locales du hub
+    # (le frontend accède directement à system.memory, storage, queue.*).
+    import platform
+    import shutil
+    total_mem_gb = None
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total_mem_gb = round(int(line.split()[1]) / 1048576.0, 1)
+                    break
+    except OSError:
+        pass
+    disk = shutil.disk_usage(DATA)
+    return JSONResponse({
+        "app": "MLXBits Image Studio",
+        "worker_online": False,
+        "worker_error": worker_error,
+        "remoteAccess": {"is_running": True, "allow_lan": True,
+                         "require_auth": True, "connected_clients": 0},
+        "system": {
+            "chip": f"Proxmox ({platform.machine()})",
+            "chip_generation": platform.machine(),
+            "memory": {"total_gb": total_mem_gb or 0.0},
+            "storage": {"free_gb": round(disk.free / 1073741824.0, 1),
+                        "total_gb": round(disk.total / 1073741824.0, 1)},
+            "queue_length": 0,
+            "versions": {"app": "hub-1.0"},
+        },
+        "queue": {"pending": 0, "running_flux": False,
+                  "running_krea2": False, "running_zimage": False},
+    })
 
 
 @app.get("/api/v1/capabilities")
 def capabilities():
-    return JSONResponse(worker("GET", "/api/v1/capabilities").json())
+    try:
+        return JSONResponse(worker("GET", "/api/v1/capabilities").json())
+    except Exception:
+        return JSONResponse(STATIC_CAPABILITIES)
 
 
 @app.get("/api/v1/models")
 def models():
-    return JSONResponse(worker("GET", "/api/v1/models").json())
+    try:
+        return JSONResponse(worker("GET", "/api/v1/models").json())
+    except Exception:
+        return JSONResponse(STATIC_MODELS)
 
 
 @app.get("/api/v1/queue")
 def queue(request: Request):
     require_auth(request)
-    return JSONResponse(worker("GET", "/api/v1/queue").json())
+    try:
+        return JSONResponse(worker("GET", "/api/v1/queue").json())
+    except Exception:
+        return JSONResponse([])
 
 
 @app.get("/api/v1/jobs/{job_id}")
@@ -309,7 +385,69 @@ def persist_completed_image(data: dict, b64) -> str:
     return image_id
 
 
-# ------------------------------------------------------------ gallery (DB)
+# ------------------------------------------------- upscale (gracieux)
+
+UPSCALE_MODELS = [
+    {"name": "realesrgan-x4plus", "display_name": "General photo (4×)", "scale": 4,
+     "tile_size": 512, "is_default": True, "installed": False, "downloading": False,
+     "supports_face_enhance": False,
+     "short_description": "Photos générales ×4",
+     "detailed_description": "Modèle par défaut (à installer)."},
+    {"name": "realesrgan-x2plus", "display_name": "General photo (2×)", "scale": 2,
+     "tile_size": 512, "is_default": False, "installed": False, "downloading": False,
+     "supports_face_enhance": False,
+     "short_description": "Photos générales ×2",
+     "detailed_description": "Upscale léger, fidèle à la source."},
+]
+
+
+@app.get("/api/v1/upscale/models")
+def upscale_models(request: Request):
+    require_auth(request)
+    try:
+        return JSONResponse(worker("GET", "/api/v1/upscale/models").json())
+    except Exception:
+        return JSONResponse(UPSCALE_MODELS)
+
+
+@app.get("/api/v1/upscale/recommendations")
+def upscale_recommendations(request: Request, width: int = 0, height: int = 0,
+                            image_id: str = "", model: str = ""):
+    require_auth(request)
+    w, h = width, height
+    if not w or not h:
+        if image_id:
+            with db() as conn:
+                row = conn.execute(
+                    "SELECT width, height FROM images WHERE id=?", (image_id,)).fetchone()
+            if row:
+                w, h = row["width"] or 0, row["height"] or 0
+        if not w or not h:
+            raise HTTPException(400, "width/height ou image_id requis")
+    scale = 4 if "x2" not in (model or "").lower() else 2
+    recs = [
+        {"label": f"Natif ×{scale}", "width": w * scale, "height": h * scale,
+         "note": "Real-ESRGAN natif.", "recommended": w * scale <= 4096},
+        {"label": "×2", "width": w * 2, "height": h * 2,
+         "note": "Plus fidèle à la source.", "recommended": False},
+    ]
+    return JSONResponse(recs)
+
+
+@app.get("/api/v1/upscale/jobs")
+def upscale_jobs(request: Request):
+    require_auth(request)
+    return JSONResponse([])
+
+
+@app.post("/api/v1/upscale/jobs")
+def upscale_start(request: Request, body: dict):
+    require_auth(request)
+    try:
+        r = worker("POST", "/api/v1/upscale/jobs", json=body, timeout=30)
+        return JSONResponse(r.json(), status_code=r.status_code)
+    except Exception as exc:
+        raise HTTPException(503, f"upscale indisponible (worker injoignable): {exc}")
 
 @app.get("/api/v1/history")
 def history(request: Request):
