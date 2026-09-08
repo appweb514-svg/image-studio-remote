@@ -95,7 +95,7 @@ struct HTTPRequestParserTests {
     func postWithBody() throws {
         let body = #"{"prompt":"a cat"}"#
         let data = makeRequest(
-            method: "POST",
+            "POST",
             path: "/api/v1/generate",
             headers: ["content-length": String(body.utf8.count)],
             body: body
@@ -108,19 +108,20 @@ struct HTTPRequestParserTests {
     func partialBody() throws {
         let body = #"{"a":"bbbbb"}"#
         let data = makeRequest(
-            method: "POST",
+            "POST",
             path: "/x",
             headers: ["content-length": String(body.utf8.count)],
             body: body
         )
         let partial = data.prefix(data.count - 2)
-        #expect(try HTTPRequestParser.parse(partial, remoteAddress: "t") == nil)
+        let parsed = try? HTTPRequestParser.parse(partial, remoteAddress: "t")
+        #expect(parsed == nil)
     }
 
     @Test("Rejects oversized bodies")
     func tooLarge() {
         let data = makeRequest(
-            method: "POST",
+            "POST",
             path: "/x",
             headers: ["content-length": String(HTTPRequestParser.maxBodyBytes + 1)]
         )
@@ -148,7 +149,7 @@ struct RemoteAccessEventBusTests {
 
         bus.emit(.jobCreated(jobID: "abc", family: "flux"))
 
-        let iterator = stream.makeAsyncIterator()
+        var iterator = stream.makeAsyncIterator()
         let frame = await iterator.next()
         let text = String(data: frame ?? Data(), encoding: .utf8) ?? ""
         #expect(text.hasPrefix("event: jobCreated\ndata: "))
