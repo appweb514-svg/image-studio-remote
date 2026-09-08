@@ -168,7 +168,6 @@ def run_job(job):
             w, h = max(64, int(w * scale_down) // 8 * 8), max(64, int(h * scale_down) // 8 * 8)
         params = dict(params, width=w, height=h)
         log(f"job {job_id}: mode rapide {w}x{h} puis x{upscale_factor}")
-    binary = "mflux-generate-flux2-edit" if edit else "mflux-generate-flux2"
     seed = params.get("seed")
     if seed is None:
         seed = random.randint(0, 2**31 - 1)
