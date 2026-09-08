@@ -84,7 +84,7 @@ struct HTTPRequestParserTests {
     @Test("Parses a simple GET request")
     func simpleGet() throws {
         let data = makeRequest(path: "/api/v1/status?verbose=1")
-        let parsed = try #require(HTTPRequestParser.parse(data, remoteAddress: "test"))
+        let parsed = try #require(try HTTPRequestParser.parse(data, remoteAddress: "test"))
         #expect(parsed.request.method == "GET")
         #expect(parsed.request.path == "/api/v1/status")
         #expect(parsed.request.query["verbose"] == "1")
@@ -100,7 +100,7 @@ struct HTTPRequestParserTests {
             headers: ["content-length": String(body.utf8.count)],
             body: body
         )
-        let parsed = try #require(HTTPRequestParser.parse(data, remoteAddress: "test"))
+        let parsed = try #require(try HTTPRequestParser.parse(data, remoteAddress: "test"))
         #expect(parsed.request.body.count == body.utf8.count)
     }
 
@@ -133,7 +133,7 @@ struct HTTPRequestParserTests {
     @Test("Parses cookies")
     func cookies() throws {
         let data = makeRequest(headers: ["cookie": "mlxbits_session=abc; other=1"])
-        let parsed = try #require(HTTPRequestParser.parse(data, remoteAddress: "t"))
+        let parsed = try #require(try HTTPRequestParser.parse(data, remoteAddress: "t"))
         #expect(parsed.request.cookies["mlxbits_session"] == "abc")
     }
 }
