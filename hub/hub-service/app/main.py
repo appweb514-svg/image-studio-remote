@@ -711,6 +711,39 @@ def get_image(image_id: str, request: Request):
     return FileResponse(row["path"], media_type="image/png")
 
 
+@app.post("/api/v1/gallery/import")
+def gallery_import(request: Request, body: dict):
+    """Importe une image existante dans la galerie (comparatifs, archives)."""
+    require_auth(request)
+    try:
+        data = base64.b64decode(body.get("image_b64", ""))
+    except Exception:
+        raise HTTPException(400, "image_b64 invalide")
+    if not data:
+        raise HTTPException(400, "image vide")
+    image_id = uuid.uuid4().hex[:16]
+    filename = body.get("filename") or f"{image_id}.png"
+    filename = Path(filename).name
+    if not filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        filename += ".png"
+    dest = IMAGES_DIR / f"{image_id}_{filename}"
+    dest.write_bytes(data)
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO images (id, filename, path, board, source, prompt,
+               model, seed, width, height, steps, guidance,
+               meta_json, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (image_id, filename, str(dest), body.get("board") or "Imports",
+             body.get("source") or "import", body.get("prompt"), body.get("model"),
+             body.get("seed"), body.get("width"), body.get("height"),
+             body.get("steps"), body.get("guidance"),
+             json.dumps(body.get("meta") or {}),
+             time.strftime("%Y-%m-%dT%H:%M:%S")),
+        )
+    return {"ok": True, "image_id": image_id}
+
+
 @app.post("/api/v1/gallery/{image_id}/flag")
 def flag_image(image_id: str, request: Request, body: dict):
     require_auth(request)
