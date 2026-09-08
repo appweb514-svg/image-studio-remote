@@ -146,13 +146,28 @@ export function QueuePage() {
   return (
     <div className="page">
       <div className="page-head">
-        <h1>File d'attente</h1>
+        <div>
+          <p className="page-kicker">Salle d'attente</p>
+          <h1>File d'attente</h1>
+        </div>
         <button className="btn btn-ghost" onClick={() => void refresh()}>
           Rafraîchir
         </button>
       </div>
-      {!loaded && <p className="muted">Chargement…</p>}
-      {loaded && jobs.length === 0 && <p className="muted">Aucun travail dans la file.</p>}
+      <hr className="page-rule" />
+      {!loaded && (
+        <div aria-busy="true">
+          <p className="skeleton" style={{ height: 64 }} />
+          <p className="skeleton" style={{ height: 64, marginTop: 8 }} />
+        </div>
+      )}
+      {loaded && jobs.length === 0 && (
+        <div className="empty-state">
+          <h2>La file est vide</h2>
+          <hr className="rule" />
+          <p>Aucun travail en cours — lancez un tirage depuis le banc d'agrandissement.</p>
+        </div>
+      )}
       {SECTIONS.map(({ status, label }) => {
         const list = byStatus.get(status) ?? [];
         if (list.length === 0) return null;
@@ -175,9 +190,9 @@ export function QueuePage() {
                     <div className="job-title">
                       {status === "pending" && <span className="drag-handle" title="Glisser">⠿</span>}
                       <StatusBadge status={job.status} />
-                      <span className="mono muted">#{job.id.slice(0, 8)}</span>
+                      <span className="ticket-no">TICKET Nº {job.id.slice(0, 8).toUpperCase()}</span>
                       {job.model && <span className="job-model">{job.model}</span>}
-                      {job.board && <span className="job-board">📌 {job.board}</span>}
+                      {job.board && <span className="job-board">Planche — {job.board}</span>}
                     </div>
                     {job.prompt && <p className="job-prompt">{job.prompt}</p>}
                     {job.status === "running" && (
@@ -239,8 +254,8 @@ export function QueuePage() {
               <article key={j.id} className="card job">
                 <div className="job-main">
                   <div className="job-title">
-                    <UpscaleStatusBadge status={j.status} />
-                    <span className="mono muted">#{j.id.slice(0, 8)}</span>
+                      <UpscaleStatusBadge status={j.status} />
+                      <span className="ticket-no">TICKET Nº {j.id.slice(0, 8).toUpperCase()}</span>
                     <span className="job-model">{j.model}</span>
                   </div>
                   {j.status === "running" && (

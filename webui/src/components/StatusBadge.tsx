@@ -1,7 +1,8 @@
 import type { JobStatus, UpscaleJobStatus } from "../types";
 
+/** Stamped letterpress labels — uppercase, letterspaced. */
 const LABELS: Record<JobStatus, string> = {
-  pending: "En attente",
+  pending: "En file",
   running: "En cours",
   completed: "Terminé",
   cancelled: "Annulé",
@@ -18,7 +19,7 @@ export function StatusBadge({ status }: { status: JobStatus }) {
 }
 
 const UPSCALE_LABELS: Record<UpscaleJobStatus, string> = {
-  queued: "En attente",
+  queued: "En file",
   running: "En cours",
   completed: "Terminé",
   failed: "Échec",

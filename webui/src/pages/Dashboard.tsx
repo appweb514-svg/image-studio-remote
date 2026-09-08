@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
 import { useEvents } from "../sse";
 import { useToast } from "../components/Toast";
@@ -32,29 +32,12 @@ function Metric({ label, value, sub }: { label: string; value: string | number; 
 }
 
 function Gauge({ value, label }: { value: number; label: string }) {
-  const uid = useId();
   const pct = Math.min(100, Math.max(0, value * 100));
-  const r = 30;
-  const circ = 2 * Math.PI * r;
   return (
-    <div className="gauge">
-      <svg viewBox="0 0 72 72" className="gauge-svg" role="img" aria-label={label}>
-        <defs>
-          <linearGradient id={uid} x1="0" y1="0" x2="1" y2="1">
-            <stop stopColor="#7c3aed" />
-            <stop offset="1" stopColor="#22d3ee" />
-          </linearGradient>
-        </defs>
-        <circle cx="36" cy="36" r={r} className="gauge-track" />
-        <circle
-          cx="36"
-          cy="36"
-          r={r}
-          className="gauge-arc"
-          stroke={`url(#${uid})`}
-          style={{ strokeDasharray: circ, strokeDashoffset: circ * (1 - pct / 100) }}
-        />
-      </svg>
+    <div className="gauge" role="img" aria-label={label}>
+      <div className="gauge-track-linear" aria-hidden>
+        <div className="gauge-fill-linear" style={{ width: `${pct}%` }} />
+      </div>
       <div className="gauge-label">
         <span className="tnum gauge-pct">{Math.round(pct)} %</span>
         <span className="muted">{label}</span>
@@ -113,8 +96,13 @@ export function DashboardPage() {
   if (!status)
     return (
       <div className="page">
+        <p className="page-kicker">Salle des machines</p>
         <h1>Tableau de bord</h1>
-        <p className="muted">Chargement…</p>
+        <hr className="page-rule" />
+        <div aria-busy="true">
+          <p className="skeleton" style={{ height: 92 }} />
+          <p className="skeleton" style={{ height: 180, marginTop: 12 }} />
+        </div>
       </div>
     );
 
@@ -127,13 +115,17 @@ export function DashboardPage() {
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Tableau de bord</h1>
+        <div>
+          <p className="page-kicker">Salle des machines</p>
+          <h1>Tableau de bord</h1>
+        </div>
         <span className="badge badge-running">
           <span className="status-dot" aria-hidden />
           {status.remoteAccess.connected_clients} client
           {status.remoteAccess.connected_clients > 1 ? "s" : ""}
         </span>
       </div>
+      <hr className="page-rule" />
 
       <div className="metrics-row">
         <Metric label="File d'attente" value={status.queue.pending} sub="travaux en attente" />
@@ -216,7 +208,7 @@ export function DashboardPage() {
               {upJobs.map((j) => (
                 <li key={j.id}>
                   <UpscaleStatusBadge status={j.status} />
-                  <span className="mono muted">#{j.id.slice(0, 8)}</span>
+                  <span className="ticket-no">Nº {j.id.slice(0, 8).toUpperCase()}</span>
                   <span>{j.model}</span>
                   {j.status === "running" && (
                     <span className="muted mono">

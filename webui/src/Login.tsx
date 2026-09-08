@@ -36,12 +36,14 @@ export function LoginScreen() {
         onSubmit={submit}
       >
         <div className="login-logo">
-          <Monogram size={58} />
+          <Monogram size={64} />
         </div>
-        <h1>
-          MLXBits <strong>Image Studio</strong>
-        </h1>
-        <p className="muted">Session protégée — connectez-vous au hub.</p>
+        <h1>Image Studio</h1>
+        <p className="login-tagline">Atelier d'images — chambre noire numérique</p>
+        <hr className="login-rule" />
+        <p className="muted">
+          <span className="micro-label">Séance protégée</span>
+        </p>
         <input
           type="text"
           autoComplete="username"

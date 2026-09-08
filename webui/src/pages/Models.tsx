@@ -25,16 +25,30 @@ export function ModelsPage() {
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Modèles</h1>
+        <div>
+          <p className="page-kicker">Registre de l'atelier</p>
+          <h1>Modèles</h1>
+        </div>
         <button className="btn btn-ghost" onClick={() => void refresh()}>
           Rafraîchir
         </button>
       </div>
+      <hr className="page-rule" />
       <p className="muted hint">
-        💡 Les téléchargements de modèles se font depuis l'application native MLXBits Image Studio.
+        Les téléchargements de modèles se font depuis l'application native MLXBits Image Studio.
       </p>
-      {!loaded && <p className="muted">Chargement…</p>}
-      {loaded && models.length === 0 && <p className="muted">Aucun modèle référencé.</p>}
+      {!loaded && (
+        <div aria-busy="true">
+          <p className="skeleton" style={{ height: 220 }} />
+        </div>
+      )}
+      {loaded && models.length === 0 && (
+        <div className="empty-state">
+          <h2>Aucun modèle au registre</h2>
+          <hr className="rule" />
+          <p>Chargez un modèle depuis l'application native pour ouvrir l'atelier.</p>
+        </div>
+      )}
       {loaded && models.length > 0 && (
         <div className="table-wrap card">
           <table>
@@ -54,6 +68,12 @@ export function ModelsPage() {
                   <td>{m.display_name}</td>
                   <td>{m.family}</td>
                   <td>
+                    {(m.on_disk_q8 || m.on_disk_q4) && (
+                      <span>
+                        <span className="charged-dot" aria-hidden />
+                        chargé
+                      </span>
+                    )}
                     {m.on_disk_q8 && <span className="badge badge-q8">Q8</span>}
                     {m.on_disk_q4 && <span className="badge badge-q4">Q4</span>}
                     {!m.on_disk_q8 && !m.on_disk_q4 && <span className="muted">—</span>}

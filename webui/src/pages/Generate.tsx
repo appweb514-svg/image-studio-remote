@@ -318,7 +318,7 @@ export function GeneratePage() {
         const e = p as { job_id: string };
         setLive((prev) => (prev && prev.id === e.job_id ? null : prev));
         setResultSrc(`/api/v1/jobs/${encodeURIComponent(e.job_id)}/preview?${Date.now()}`);
-        toast("Génération terminée", "success");
+        toast("Tirage terminé", "success");
       },
       jobFailed: (p) => {
         const e = p as { job_id: string; message: string };
@@ -364,9 +364,13 @@ export function GeneratePage() {
 
   return (
     <div className="page">
+      <p className="page-kicker">Banc d'agrandissement</p>
       <h1>Générer</h1>
+      <hr className="page-rule" />
       <div className="generate-grid">
         <form className="card glass form" onSubmit={submit}>
+          <h2 className="bench-section-title">Négatif — source &amp; paramètres</h2>
+          <p className="bench-sub">Préparez la plaque, réglez la lumière.</p>
           {supportsEdit && (
             <div className="segmented" role="group" aria-label="Mode">
               <button
@@ -475,7 +479,7 @@ export function GeneratePage() {
 
           <div className="field-row">
             <div className="field">
-              <span>Dimensions (W × H)</span>
+              <span>Format — dimensions (L × H)</span>
               <div className="inline">
                 <input
                   type="number"
@@ -499,7 +503,7 @@ export function GeneratePage() {
               </div>
             </div>
             <div className="field">
-              <span>Résolution cible</span>
+              <span>Définition</span>
               <select value={targetMp} onChange={(e) => setTargetMp(Number(e.target.value))}>
                 {TARGET_MPS.map((mpv) => (
                   <option key={mpv} value={mpv}>
@@ -564,7 +568,7 @@ export function GeneratePage() {
                   title="Seed aléatoire"
                   onClick={() => setSeedText(String(Math.floor(Math.random() * 2 ** 32)))}
                 >
-                  🎲
+                  Aléa
                 </button>
               </div>
             </label>
@@ -773,14 +777,20 @@ export function GeneratePage() {
         </form>
 
         <aside className="card glass live-card">
-          <h2>Suivi en direct</h2>
-          {!live && !resultSrc && <p className="muted">Aucune génération en cours.</p>}
+          <h2 className="bench-section-title">Tirage — épreuve en direct</h2>
+          {!live && !resultSrc && (
+            <div className="live-preview">
+              <div className="live-frame live-frame-idle">
+                <div className="live-frame-inner" />
+              </div>
+            </div>
+          )}
           {live && (
             <>
               <div className="live-head">
-                <span className="muted mono">#{live.id.slice(0, 8)}</span>
-                <span className="muted live-metrics">
-                  Pas <span className="tnum">{live.step}</span>/<span className="tnum">{live.totalSteps || "?"}</span> · <span className="tnum">{elapsed}</span>s
+                <span className="exposure-id">Nº {live.id.slice(0, 8)}</span>
+                <span className="live-metrics tnum">
+                  POSE {live.step}/{live.totalSteps || "—"} · {elapsed}s
                 </span>
               </div>
               <ProgressBar
@@ -822,7 +832,7 @@ export function GeneratePage() {
           )}
           {resultSrc && !live && (
             <div className="live-result">
-              <p className="muted">Dernier résultat :</p>
+              <p className="micro-label">Épreuve — tirage final</p>
               <div className="reveal-frame">
                 <span className="reveal-ring" aria-hidden />
                 <a href={resultSrc} target="_blank" rel="noreferrer">

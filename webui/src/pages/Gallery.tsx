@@ -160,8 +160,12 @@ export function GalleryPage() {
   return (
     <div className="page">
       <div className="page-head">
-        <h1>Galerie</h1>
+        <div>
+          <p className="page-kicker">Planches contact</p>
+          <h1>Galerie</h1>
+        </div>
       </div>
+      <hr className="page-rule" />
       <div className="filter-bar">
         <label className="field">
           <span>Famille</span>
@@ -196,8 +200,18 @@ export function GalleryPage() {
         </label>
       </div>
 
-      {!loaded && <p className="muted">Chargement…</p>}
-      {loaded && filtered.length === 0 && <p className="muted">Aucune image.</p>}
+      {!loaded && (
+        <div aria-busy="true">
+          <p className="skeleton" style={{ height: 180 }} />
+        </div>
+      )}
+      {loaded && filtered.length === 0 && (
+        <div className="empty-state">
+          <h2>Aucune épreuve à voir</h2>
+          <hr className="rule" />
+          <p>La planche est encore vierge — vos tirages y seront épinglés.</p>
+        </div>
+      )}
 
       <div className="gallery-grid">
         {filtered.map((item, i) => (
@@ -215,6 +229,16 @@ export function GalleryPage() {
               alt={item.filename}
               loading="lazy"
             />
+            <span className="contact-caption" aria-hidden>
+              <p>{item.metadata?.prompt ?? item.filename}</p>
+              <span>
+                {item.metadata?.seed !== undefined ? `SEED ${item.metadata.seed}` : "SEED —"}
+                {item.metadata?.width && item.metadata?.height
+                  ? ` · ${item.metadata.width}×${item.metadata.height}`
+                  : ""}
+                {item.metadata?.steps ? ` · ${item.metadata.steps} POSES` : ""}
+              </span>
+            </span>
             {item.flag && (
               <span className={`flag-corner flag-${item.flag}`}>
                 {item.flag === "pick" ? "✓" : "✕"}
@@ -258,10 +282,31 @@ export function GalleryPage() {
           <button className="viewer-close" onClick={closeViewer} aria-label="Fermer">
             ✕
           </button>
+          <span className="light-table-count" aria-hidden>
+            ÉPREUVE Nº {(viewerIndex ?? 0) + 1} / {filtered.length}
+          </span>
+          <div className="light-table-strip" aria-label="Épreuves voisines">
+            {filtered.map((n, ni) => (
+              <button
+                key={n.id}
+                type="button"
+                className={ni === viewerIndex ? "current" : ""}
+                onClick={() => {
+                  setViewerIndex(ni);
+                  setZoom(1);
+                }}
+                aria-label={`Voir ${n.filename}`}
+                aria-current={ni === viewerIndex}
+              >
+                <img src={n.thumbnail_url} alt="" loading="lazy" />
+              </button>
+            ))}
+          </div>
           <aside className="viewer-detail">
+            <p className="micro-label">Fiche d'épreuve</p>
             <h3 className="mono">{current.filename}</h3>
             <p className="muted">{formatDate(current.modified_at)}</p>
-            {current.board && <p>📌 {current.board}</p>}
+            {current.board && <p className="muted">Planche — {current.board}</p>}
             {current.metadata?.prompt && <p className="detail-prompt">{current.metadata.prompt}</p>}
             {current.metadata?.negative_prompt && (
               <p className="muted detail-prompt">Négatif : {current.metadata.negative_prompt}</p>
@@ -314,19 +359,19 @@ export function GalleryPage() {
             </dl>
             <div className="detail-actions">
               <button className="btn btn-chip" onClick={() => void doAction(current, "reuse")}>
-                ♻️ Réutiliser les réglages
+                Réutiliser les réglages
               </button>
               <button className="btn btn-chip" onClick={() => void doAction(current, "variation")}>
-                🔀 Générer une variation
+                Générer une variation
               </button>
               <button className="btn btn-chip" onClick={() => void copyPrompt(current.metadata?.prompt)}>
-                📋 Copier le prompt
+                Copier le prompt
               </button>
               <button className="btn btn-chip" onClick={() => setUpscaleItem(current)}>
-                🔍 UpScaler
+                Re-tirage grand format
               </button>
               <a className="btn btn-chip" href={current.url} download={current.filename}>
-                ⬇️ Télécharger
+                Télécharger
               </a>
             </div>
             <div className="detail-row">

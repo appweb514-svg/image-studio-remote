@@ -178,11 +178,12 @@ export function UpscaleModal({
 
   return (
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal modal-wide" role="dialog" aria-modal="true" aria-label="UpScaler">
+      <div className="modal modal-wide" role="dialog" aria-modal="true" aria-label="Re-tirage grand format">
         <button className="modal-close" onClick={onClose} aria-label="Fermer">
           ✕
         </button>
-        <h2 className="modal-title">UpScaler</h2>
+        <p className="page-kicker">Agrandisseur</p>
+        <h2 className="modal-title">Re-tirage grand format</h2>
         <p className="muted mono up-source">
           Source : {item.filename}
           {item.metadata?.width && item.metadata?.height
@@ -192,7 +193,7 @@ export function UpscaleModal({
 
         {job && job.status === "completed" ? (
           <div className="up-done">
-            <p className="up-done-title">✅ Terminé</p>
+            <p className="up-done-title">Tirage terminé</p>
             <p className="muted">
               L'image agrandie a été ajoutée à la galerie (planche « Upscaled »).
             </p>
@@ -245,7 +246,7 @@ export function UpscaleModal({
               ))}
 
             <div className="field">
-              <span>Résolution cible</span>
+              <span>Format — résolution</span>
               {!recsLoaded && <p className="muted">Calcul des recommandations…</p>}
               {recsLoaded && recs && recs.length > 0 && (
                 <div className="up-rec-grid">
@@ -262,8 +263,8 @@ export function UpscaleModal({
                       >
                         <span className="up-rec-label">
                           {r.label}
-                          {r.recommended ? " ★" : ""}
                         </span>
+                        {r.recommended && <span className="up-rec-tag">recommandé</span>}
                         <span className="mono">
                           {r.width}×{r.height}
                         </span>

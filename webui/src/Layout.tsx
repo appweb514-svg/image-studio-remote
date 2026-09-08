@@ -4,11 +4,11 @@ import { useAuth } from "./auth";
 import { Aurora, Monogram } from "./components/Aurora";
 
 const NAV = [
-  { to: "/", label: "Générer", icon: "✨", end: true },
-  { to: "/queue", label: "File d'attente", icon: "≡" },
-  { to: "/gallery", label: "Galerie", icon: "🖼" },
-  { to: "/models", label: "Modèles", icon: "🧠" },
-  { to: "/dashboard", label: "Tableau de bord", icon: "📊" },
+  { to: "/", label: "Générer", icon: "N", end: true },
+  { to: "/queue", label: "File d'attente", icon: "F" },
+  { to: "/gallery", label: "Galerie", icon: "P" },
+  { to: "/models", label: "Modèles", icon: "M" },
+  { to: "/dashboard", label: "Tableau de bord", icon: "T" },
 ];
 
 export function Layout() {
@@ -27,7 +27,7 @@ export function Layout() {
         <span className="brand">
           <Monogram size={26} />
           <span className="brand-text">
-            MLXBits <strong>Image Studio</strong>
+            Image Studio <span className="brand-sub">Chambre noire</span>
           </span>
         </span>
         <span className="topbar-chip tnum">
