@@ -5,8 +5,10 @@ services:
     image: ghcr.io/appweb514-svg/studio-hub:latest
     pull_policy: always
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # Pas de port publié : accès uniquement via le domaine Traefik
+    # (APP_DOMAIN). Le port 8000 reste exposé en interne pour Traefik.
+    expose:
+      - "8000"
     environment:
       # Token partagé avec l'agent pull de la Mac mini (mode pull : le hub
       # n'appelle jamais la mini, c'est elle qui vient chercher ses jobs).
