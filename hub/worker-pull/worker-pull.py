@@ -211,7 +211,8 @@ def run_job(job):
                 step, total = int(m.group(1)), int(m.group(2))
                 if total and 0 < step <= total and step != last_sent_step:
                     last_sent_step = step
-                    post_progress(job_id, step, total, stepwise, last_preview)
+                    post_progress(job_id, step, total, stepwise, last_preview,
+                                  width=params.get("width"), height=params.get("height"))
                     last_preview = preview_state[0]
             now = time.time()
             if now - last_cancel_check > 2:
@@ -268,7 +269,8 @@ def post_phase(job_id, phase):
         log(f"phase ignorée: {exc}")
 
 
-def post_progress(job_id, step, total, stepwise_dir, last_preview):
+def post_progress(job_id, step, total, stepwise_dir, last_preview,
+                    width=None, height=None):
     preview_b64 = None
     try:
         frames = sorted(stepwise_dir.glob("*.png"), key=lambda p: p.stat().st_mtime)
@@ -278,6 +280,8 @@ def post_progress(job_id, step, total, stepwise_dir, last_preview):
     except Exception:
         pass
     payload = {"step": step, "total": total}
+    if width and height:
+        payload["width"], payload["height"] = width, height
     if preview_b64:
         payload["preview_b64"] = preview_b64
     hub("POST", f"/api/v1/worker/jobs/{job_id}/progress", payload)

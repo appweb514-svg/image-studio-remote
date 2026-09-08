@@ -513,11 +513,31 @@ def touch_heartbeat(info: Optional[dict] = None):
             )
 
 
+STALE_RUNNING_SECONDS = 15 * 60
+
+
+def recover_stale_jobs(conn):
+    """Les jobs 'running' sans signe de vie = agent tué/redémarré."""
+    rows = conn.execute(
+        "SELECT id FROM worker_jobs WHERE status='running' AND updated_at<?",
+        (time.time() - STALE_RUNNING_SECONDS,)).fetchall()
+    for r in rows:
+        conn.execute("UPDATE worker_jobs SET status='failed', "
+                     "error='agent interrompu (redémarrage), relancez le job', "
+                     "updated_at=? WHERE id=?", (time.time(), r["id"]))
+        emit_local("jobFailed", {"job_id": r["id"],
+                                 "message": "agent interrompu (redémarrage), relancez le job"})
+    if rows:
+        emit_local("queueChanged", {})
+    return len(rows)
+
+
 @app.get("/api/v1/worker/jobs/next")
 def worker_next(request: Request):
     require_worker(request)
     touch_heartbeat()
     with db() as conn:
+        recover_stale_jobs(conn)
         row = conn.execute(
             "SELECT * FROM worker_jobs WHERE status='queued' ORDER BY created_at ASC LIMIT 1"
         ).fetchone()
@@ -550,11 +570,23 @@ def worker_progress(job_id: str, request: Request, body: dict):
     step, total = int(body.get("step") or 0), int(body.get("total") or 0)
     preview_b64 = body.get("preview_b64")
     phase = body.get("phase")
+    eff_w, eff_h = body.get("width"), body.get("height")
     with db() as conn:
         conn.execute(
             "UPDATE worker_jobs SET progress_json=?, updated_at=? WHERE id=?",
             (json.dumps({"step": step, "total": total, "phase": phase}), time.time(), job_id),
         )
+        if eff_w and eff_h:
+            row = conn.execute("SELECT params_json FROM worker_jobs WHERE id=?",
+                               (job_id,)).fetchone()
+            if row:
+                try:
+                    params = json.loads(row["params_json"] or "{}")
+                except Exception:
+                    params = {}
+                params["width"], params["height"] = int(eff_w), int(eff_h)
+                conn.execute("UPDATE worker_jobs SET params_json=? WHERE id=?",
+                             (json.dumps(params), job_id))
     if preview_b64:
         try:
             (PREVIEWS_DIR / f"{job_id}.jpg").write_bytes(base64.b64decode(preview_b64))
