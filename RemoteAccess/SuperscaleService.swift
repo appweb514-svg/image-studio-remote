@@ -113,8 +113,14 @@ final class SuperscaleService {
     /// native model scale (×2/×4), intermediate ×2, and "fit within"
     /// 2K/4K targets rounded to a diffusion-friendly multiple of 8.
     func recommendations(sourceWidth: Int, sourceHeight: Int, modelName: String?) -> [Recommendation] {
-        guard sourceWidth >= 8, sourceHeight >= 8,
-              let info = modelInfo(named: modelName) else { return [] }
+        // Un nom explicite inconnu ne retombe pas sur le modèle par défaut.
+        let info: ModelInfo?
+        if let modelName {
+            info = SuperscaleKit.ModelRegistry.model(named: modelName)
+        } else {
+            info = SuperscaleKit.ModelRegistry.defaultModel
+        }
+        guard sourceWidth >= 8, sourceHeight >= 8, let info else { return [] }
         let scale = info.scale
         let round8: (Double) -> Int = { max(8, Int(($0 / 8.0).rounded() * 8)) }
         var out: [Recommendation] = []

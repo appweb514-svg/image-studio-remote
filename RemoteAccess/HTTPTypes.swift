@@ -151,10 +151,8 @@ enum HTTPRequestParser {
             headers[name] = value
         }
 
-        guard let contentLengthHeader = headers["content-length"] else {
-            throw HTTPParseError.malformed
-        }
-        guard let contentLength = Int(contentLengthHeader), contentLength >= 0 else {
+        // Absent Content-Length = pas de corps (GET, DELETE…) — valide en HTTP.
+        guard let contentLength = Int(headers["content-length"] ?? "0"), contentLength >= 0 else {
             throw HTTPParseError.malformed
         }
         guard contentLength <= maxBodyBytes else { throw HTTPParseError.tooLarge }
