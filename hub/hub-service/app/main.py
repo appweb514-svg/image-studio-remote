@@ -171,7 +171,7 @@ STATIC_CAPABILITIES = {
     "families": [{"id": "flux", "display_name": "FLUX.2", "web_enqueue": True,
                   "supports_edit": True, "max_edit_images": 4,
                   "supports_fast_mode": True, "supports_prompt_enhance": True,
-                  "fast_mode_note": "Génération 512px + upscale Real-ESRGAN x4",
+                  "fast_mode_note": "Génération 384px + upscale Superscale x4 (Neural Engine)",
                   "prompt_enhance_note": "Réécriture du prompt par Qwen3.5-4B local"}],
     "models": [
         {"id": "flux2-klein-4b", "family": "flux", "display_name": "FLUX.2 Klein 4B",
