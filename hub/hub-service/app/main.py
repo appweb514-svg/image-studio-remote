@@ -24,7 +24,15 @@ DATA = Path(os.environ.get("STUDIO_DATA", "/data"))
 IMAGES_DIR = DATA / "images"
 UPLOADS_DIR = DATA / "uploads"
 DB_PATH = DATA / "studio.db"
-WORKER_URL = os.environ.get("WORKER_URL", "http://100.102.122.144:8899").rstrip("/")
+# Plusieurs URLs possibles (NetBird + LAN), séparées par des virgules :
+# le hub essaie chacune jusqu'à ce qu'une réponde.
+WORKER_URLS = [
+    u.strip().rstrip("/")
+    for u in os.environ.get(
+        "WORKER_URL", "http://100.102.122.144:8899"
+    ).split(",")
+    if u.strip()
+]
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "klein-4b")
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "studio")
@@ -77,9 +85,19 @@ def worker_headers():
     return {"Authorization": "Bearer " + WORKER_TOKEN}
 
 
+class WorkerUnreachable(Exception):
+    pass
+
+
 def worker(method: str, path: str, **kwargs):
-    return requests.request(method, WORKER_URL + path, headers=worker_headers(),
-                            timeout=kwargs.pop("timeout", 30), **kwargs)
+    last_error: Exception | None = None
+    for base in WORKER_URLS:
+        try:
+            return requests.request(method, base + path, headers=worker_headers(),
+                                    timeout=kwargs.pop("timeout", 12), **kwargs)
+        except requests.RequestException as exc:
+            last_error = exc
+    raise WorkerUnreachable(str(last_error))
 
 
 # --------------------------------------------------------------------- auth
@@ -214,8 +232,19 @@ def events(request: Request):
 
     def stream():
         import base64 as b64
-        with requests.get(WORKER_URL + "/api/v1/events", headers=worker_headers(),
-                          stream=True, timeout=(10, None)) as upstream:
+        connected = None
+        last_error = None
+        for base in WORKER_URLS:
+            try:
+                connected = requests.get(base + "/api/v1/events", headers=worker_headers(),
+                                         stream=True, timeout=(10, None))
+                break
+            except requests.RequestException as exc:
+                last_error = exc
+        if connected is None:
+            yield f"event: jobFailed\ndata: {json.dumps({'message': f'worker injoignable: {last_error}'})}\r\n\r\n"
+            return
+        with connected as upstream:
             event_name = None
             for raw in upstream.iter_lines(decode_unicode=True):
                 if raw is None:
