@@ -320,7 +320,9 @@ def events(request: Request):
             except requests.RequestException as exc:
                 last_error = exc
         if connected is None:
-            yield f"event: jobFailed\ndata: {json.dumps({'message': f'worker injoignable: {last_error}'})}\r\n\r\n"
+            # Commentaire SSE (ignoré par EventSource) : pas d'erreur affichée,
+            # le navigateur reconnecte automatiquement.
+            yield ": worker hors ligne, nouvelle tentative de connexion\r\n\r\n"
             return
         with connected as upstream:
             event_name = None
