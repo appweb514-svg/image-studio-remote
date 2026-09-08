@@ -84,27 +84,25 @@ struct MLXBitsImageStudioApp: App {
         _settings = State(initialValue: settings)
         _driverController = State(initialValue: driver)
         _runner = State(initialValue: runner)
-        // One shared driver across families — it keeps a single warm model,
-        // so cross-family switches evict before loading (see coordinator gate).
-        ideogram4Runner.driver = driver
-        krea2Runner.driver = driver
-        zimageRunner.driver = driver
         // Remote access: shared generation services + embedded HTTP server.
+        // Note: `_property.wrappedValue` access is required here — reading the
+        // wrapped value through `self` before all stored properties are
+        // initialized is a definite-initialization error.
         let bus = RemoteAccessEventBus()
         let service = GenerationService(
             settings: settings,
-            fluxStore: store,
+            fluxStore: _store.wrappedValue,
             fluxRunner: runner,
-            krea2Store: krea2Store,
-            krea2Runner: krea2Runner,
-            zimageStore: zimageStore,
-            zimageRunner: zimageRunner,
-            coordinator: coordinator,
-            timing: timing,
-            gallery: gallery,
+            krea2Store: _krea2Store.wrappedValue,
+            krea2Runner: _krea2Runner.wrappedValue,
+            zimageStore: _zimageStore.wrappedValue,
+            zimageRunner: _zimageRunner.wrappedValue,
+            coordinator: _coordinator.wrappedValue,
+            timing: _timing.wrappedValue,
+            gallery: _gallery.wrappedValue,
             bus: bus
         )
-        service.ideogramStore = ideogram4Store
+        service.ideogramStore = _ideogram4Store.wrappedValue
         _remoteEventBus = State(initialValue: bus)
         _generationService = State(initialValue: service)
         _remoteAccess = State(initialValue: RemoteAccessStore(
@@ -112,6 +110,11 @@ struct MLXBitsImageStudioApp: App {
             service: service,
             bus: bus
         ))
+        // One shared driver across families — it keeps a single warm model,
+        // so cross-family switches evict before loading (see coordinator gate).
+        ideogram4Runner.driver = driver
+        krea2Runner.driver = driver
+        zimageRunner.driver = driver
         // Fold any pre-library default-LoRA list into LibraryLora.isDefault flags.
         loraLibrary.migrateLegacyDefaults(from: settings)
     }
