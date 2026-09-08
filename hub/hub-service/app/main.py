@@ -169,7 +169,10 @@ def me(request: Request):
 
 STATIC_CAPABILITIES = {
     "families": [{"id": "flux", "display_name": "FLUX.2", "web_enqueue": True,
-                  "supports_edit": True, "max_edit_images": 4}],
+                  "supports_edit": True, "max_edit_images": 4,
+                  "supports_fast_mode": True, "supports_prompt_enhance": True,
+                  "fast_mode_note": "Génération 512px + upscale Real-ESRGAN x4",
+                  "prompt_enhance_note": "Réécriture du prompt par Qwen3.5-4B local"}],
     "models": [
         {"id": "flux2-klein-4b", "family": "flux", "display_name": "FLUX.2 Klein 4B",
          "is_distilled": True, "default_steps": 4, "default_guidance": 1.0,
@@ -536,10 +539,11 @@ def worker_progress(job_id: str, request: Request, body: dict):
     touch_heartbeat()
     step, total = int(body.get("step") or 0), int(body.get("total") or 0)
     preview_b64 = body.get("preview_b64")
+    phase = body.get("phase")
     with db() as conn:
         conn.execute(
             "UPDATE worker_jobs SET progress_json=?, updated_at=? WHERE id=?",
-            (json.dumps({"step": step, "total": total}), time.time(), job_id),
+            (json.dumps({"step": step, "total": total, "phase": phase}), time.time(), job_id),
         )
     if preview_b64:
         try:
@@ -549,7 +553,10 @@ def worker_progress(job_id: str, request: Request, body: dict):
                                       "step": step, "total_steps": total})
         except Exception:
             pass
-    emit_local("jobProgress", {"job_id": job_id, "step": step, "total_steps": total})
+    evt = {"job_id": job_id, "step": step, "total_steps": total}
+    if phase:
+        evt["phase"] = phase
+    emit_local("jobProgress", evt)
     return {"ok": True}
 
 
@@ -572,6 +579,8 @@ def worker_complete(job_id: str, request: Request, body: dict):
         dest = IMAGES_DIR / f"{image_id}.png"
         dest.write_bytes(image_bytes)
         seed = body.get("seed", params.get("seed"))
+        if body.get("enhanced_prompt"):
+            params = dict(params, enhanced_prompt=body["enhanced_prompt"])
         conn.execute(
             """INSERT INTO images (id, filename, path, board, source, prompt,
                negative_prompt, model, seed, width, height, steps, guidance,
@@ -668,6 +677,10 @@ def history(request: Request):
 
 
 def image_dto(row):
+    try:
+        meta_extra = json.loads(row["meta_json"] or "{}")
+    except Exception:
+        meta_extra = {}
     return {
         "id": row["id"],
         "url": f"/api/v1/images/{row['id']}",
@@ -683,6 +696,7 @@ def image_dto(row):
             "model": row["model"], "seed": row["seed"], "steps": row["steps"],
             "guidance": row["guidance"], "width": row["width"], "height": row["height"],
             "quantize": None, "loras": [],
+            "enhanced_prompt": meta_extra.get("enhanced_prompt"),
         },
     }
 
