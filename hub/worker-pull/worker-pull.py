@@ -30,6 +30,22 @@ WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "klein-4b")
 MFLUX_BIN = os.environ.get("MFLUX_BIN", str(Path.home() / "mflux-env/bin"))
 MODEL_REPO = os.environ.get("MODEL_REPO", "ar9av/FLUX.2-klein-4B-mflux-4bit")
 BASE_MODEL = os.environ.get("BASE_MODEL", "flux2-klein-4b")
+
+# Modèles sélectionnables dans l'UI : id -> repo, binaire CLI, base, steps.
+MODEL_REGISTRY = {
+    "flux2-klein-4b": {
+        "repo": "ar9av/FLUX.2-klein-4B-mflux-4bit",
+        "binary": "mflux-generate-flux2",
+        "base_model": "flux2-klein-4b",
+        "default_steps": 4,
+    },
+    "z-image-turbo": {
+        "repo": "filipstrand/Z-Image-Turbo-mflux-4bit",
+        "binary": "mflux-generate-z-image-turbo",
+        "base_model": "z-image-turbo",
+        "default_steps": 8,
+    },
+}
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "2"))
 STEPWISE_ROOT = BASE / "stepwise"
 STEP_RE = re.compile(r"(\d+)/(\d+)")
@@ -122,6 +138,13 @@ def resolve_input(value):
 
 def run_job(job):
     job_id, params = job["id"], job["params"]
+    spec = MODEL_REGISTRY.get(params.get("model") or "flux2-klein-4b",
+                              MODEL_REGISTRY["flux2-klein-4b"])
+    binary_name = spec["binary"]
+    if params.get("edit_mode"):
+        if spec["binary"] != "mflux-generate-flux2":
+            raise RuntimeError("édition supportée uniquement sur FLUX.2")
+        binary_name = "mflux-generate-flux2-edit"
     edit = bool(params.get("edit_mode"))
     fast_mode = bool(params.get("fast_mode")) and not edit
     upscale_factor = int(params.get("upscale_factor") or 4)
@@ -154,14 +177,15 @@ def run_job(job):
     stepwise.mkdir(parents=True, exist_ok=True)
     out_file = stepwise / "output.png"
 
+    default_steps = params.get("steps") or spec["default_steps"]
     args = [
-        os.path.join(MFLUX_BIN, binary),
-        "--model", params.get("model_repo") or MODEL_REPO,
-        "--base-model", BASE_MODEL,
+        os.path.join(MFLUX_BIN, binary_name),
+        "--model", params.get("model_repo") or spec["repo"],
+        "--base-model", spec["base_model"],
         "--prompt", params.get("prompt", ""),
         "--width", str(params.get("width") or 512),
         "--height", str(params.get("height") or 512),
-        "--steps", str(params.get("steps") or 4),
+        "--steps", str(default_steps),
         "--guidance", str(params.get("guidance") or 1.0),
         "--seed", str(seed),
         "--output", str(out_file),
@@ -176,7 +200,7 @@ def run_job(job):
             raise RuntimeError("edit_image_paths vide")
         args += ["--image-paths"] + paths[:4]
 
-    log(f"job {job_id}: {binary} steps={params.get('steps')} seed={seed}")
+    log(f"job {job_id}: {binary_name} steps={default_steps} seed={seed}")
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, bufsize=1)
     last_preview, last_sent_step = "", 0
