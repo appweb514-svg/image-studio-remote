@@ -17,12 +17,18 @@ services:
       WEBUI_DIST: /srv/webui
     volumes:
       - studio-data:/data
+    networks:
+      - dokploy-network
     labels:
       - traefik.enable=true
       - traefik.http.routers.imgstudio.rule=Host(`imgstudio.int.labvirtuel.fr`)
       - traefik.http.routers.imgstudio.entrypoints=web
       - traefik.http.routers.imgstudio.service=imgstudio
       - traefik.http.services.imgstudio.loadbalancer.server.port=8000
+
+networks:
+  dokploy-network:
+    external: true
 
 volumes:
   studio-data:
