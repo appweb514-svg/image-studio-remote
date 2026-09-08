@@ -16,7 +16,8 @@ settings:
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
     MARKETING_VERSION: "0.6.2"
-    CURRENT_PROJECT_VERSION: "1"  configs:
+    CURRENT_PROJECT_VERSION: "1"
+  configs:
     # Team only on Release so Debug builds stay unsigned/adhoc and don't
     # require a provisioning round-trip. CI archives Release (see
     # .github/workflows/release.yml), overriding DEVELOPMENT_TEAM at build time.
