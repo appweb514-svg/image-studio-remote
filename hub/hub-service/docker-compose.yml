@@ -1,0 +1,25 @@
+# MLXBits Image Studio — hub Proxmox (Dokploy)
+# Contexte de build = racine du repo (Dokploy clone tout le repo).
+services:
+  studio-hub:
+    build:
+      context: ../..
+      dockerfile: hub/hub-service/Dockerfile
+    container_name: studio-hub
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # URL du worker mflux sur la Mac mini (réseau NetBird)
+      WORKER_URL: ${WORKER_URL:-http://100.102.122.144:8899}
+      WORKER_TOKEN: ${WORKER_TOKEN:-klein-4b}
+      # Compte de connexion au hub (à surcharger via l'environnement Dokploy)
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-studio}
+      STUDIO_DATA: /data
+      WEBUI_DIST: /srv/webui
+    volumes:
+      - studio-data:/data
+
+volumes:
+  studio-data:
