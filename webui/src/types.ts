@@ -9,6 +9,10 @@ export interface Family {
   web_enqueue: boolean;
   supports_edit: boolean;
   max_edit_images: number;
+  supports_fast_mode?: boolean;
+  supports_prompt_enhance?: boolean;
+  fast_mode_note?: string;
+  prompt_enhance_note?: string;
 }
 
 export interface ModelInfo {
@@ -86,6 +90,7 @@ export interface ImageMetadata {
   height?: number;
   quantize?: number;
   loras: string[];
+  enhanced_prompt?: string;
 }
 
 export interface GalleryItemDTO {
@@ -155,6 +160,8 @@ export interface GenerateRequest {
   edit_mode?: boolean;
   edit_image_paths?: string[];
   loras?: { path: string; strength?: number; enabled?: boolean }[];
+  fast_mode?: boolean;
+  enhance_prompt?: boolean;
 }
 
 // Upscaling (Superscale / Real-ESRGAN)
@@ -217,6 +224,7 @@ export interface JobProgressEvent extends JobEventBase {
   step: number;
   total_steps: number;
   status_line?: string;
+  phase?: string;
 }
 export interface JobPreviewEvent extends JobEventBase {
   jpeg_base64: string;

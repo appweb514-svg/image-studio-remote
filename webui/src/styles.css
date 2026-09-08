@@ -597,6 +597,104 @@ input[type="range"] {
   color: var(--text-muted);
 }
 
+/* ---------- options de tirage (interrupteurs chambre noire) ---------- */
+.opt-group {
+  gap: 10px;
+}
+.opt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--inset);
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+.opt-row:hover {
+  border-color: var(--border-strong);
+}
+.opt-row:has(input:checked) {
+  border-color: var(--amber-line);
+  background: rgba(216, 162, 74, 0.06);
+}
+.opt-row:has(input:focus-visible) {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+.opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.opt-title {
+  font-size: 0.93rem;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.opt-sub {
+  font-size: 0.8rem;
+  font-family: var(--mono);
+}
+.switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 40px;
+  height: 23px;
+  display: inline-block;
+}
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch-track {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: rgba(236, 231, 223, 0.08);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+  position: relative;
+}
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.2s var(--ease), background-color 0.2s ease;
+}
+.switch-on .switch-track {
+  background: rgba(216, 162, 74, 0.28);
+  border-color: var(--amber-line);
+}
+.switch-on .switch-thumb {
+  transform: translateX(17px);
+  background: var(--amber);
+}
+.dim-hint {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--amber-hover);
+  border: 1px solid var(--amber-line);
+  border-radius: var(--radius-sm);
+  background: var(--amber-dim);
+  padding: 7px 11px;
+}
+
 /* ---------- buttons ---------- */
 .btn {
   position: relative;
@@ -1011,6 +1109,12 @@ input[type="range"] {
   font-family: var(--mono);
   font-size: 0.8rem;
   color: var(--text-muted);
+}
+.live-phase {
+  font-size: 0.82rem;
+  color: var(--amber-hover);
+  text-align: right;
+  max-width: 70%;
 }
 .exposure-id {
   font-family: var(--mono);
@@ -1547,6 +1651,16 @@ input[type="range"] {
   max-height: 120px;
   overflow-y: auto;
   color: var(--text);
+}
+.detail-enhanced {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.detail-enhanced .btn {
+  align-self: flex-start;
 }
 .detail-grid {
   display: grid;

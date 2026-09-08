@@ -311,6 +311,18 @@ export function GalleryPage() {
             {current.metadata?.negative_prompt && (
               <p className="muted detail-prompt">Négatif : {current.metadata.negative_prompt}</p>
             )}
+            {current.metadata?.enhanced_prompt && (
+              <div className="detail-enhanced">
+                <p className="micro-label">Prompt amélioré</p>
+                <p className="detail-prompt">{current.metadata.enhanced_prompt}</p>
+                <button
+                  className="btn btn-chip"
+                  onClick={() => void copyPrompt(current.metadata?.enhanced_prompt)}
+                >
+                  Copier le prompt amélioré
+                </button>
+              </div>
+            )}
             <dl className="detail-grid">
               {current.metadata?.model && (
                 <>

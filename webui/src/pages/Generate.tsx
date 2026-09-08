@@ -21,6 +21,7 @@ interface LiveJob {
   totalSteps: number;
   step: number;
   statusLine?: string;
+  phase?: string;
   startedAt: number;
   previewSrc?: string;
   previewPrev?: string;
@@ -97,6 +98,8 @@ export function GeneratePage() {
   const [mode, setMode] = useState<"generate" | "edit">("generate");
   const [editImages, setEditImages] = useState<EditImage[]>([]);
   const editFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [fastMode, setFastMode] = useState(false);
+  const [enhancePrompt, setEnhancePrompt] = useState(false);
 
   const [targetMp, setTargetMp] = useState(1.0);
   const [submitting, setSubmitting] = useState(false);
@@ -132,6 +135,18 @@ export function GeneratePage() {
   );
   const supportsEdit = selectedFamily?.supports_edit ?? false;
   const maxEditImages = selectedFamily?.max_edit_images ?? 4;
+  const supportsFastMode = selectedFamily?.supports_fast_mode ?? false;
+  const supportsPromptEnhance = selectedFamily?.supports_prompt_enhance ?? false;
+  const fastModeNote = selectedFamily?.fast_mode_note ?? "512px + upscale ×4";
+  const promptEnhanceNote = selectedFamily?.prompt_enhance_note ?? "Qwen3.5 local";
+
+  // Les options retombent à OFF dès que la famille ne les supporte plus.
+  useEffect(() => {
+    if (!supportsFastMode) setFastMode(false);
+  }, [supportsFastMode]);
+  useEffect(() => {
+    if (!supportsPromptEnhance) setEnhancePrompt(false);
+  }, [supportsPromptEnhance]);
   const isEdit = supportsEdit && mode === "edit";
   const modelsForFamily = useMemo(
     () => caps?.models.filter((m) => m.family === family) ?? [],
@@ -231,6 +246,8 @@ export function GeneratePage() {
         seed: seedText.trim() === "" ? null : Number(seedText.trim()),
         quantize: quantize ?? undefined,
         board: board.trim() || undefined,
+        fast_mode: supportsFastMode ? fastMode : false,
+        enhance_prompt: supportsPromptEnhance ? enhancePrompt : false,
         loras: loras.filter((l) => l.path.trim()).length
           ? loras
               .filter((l) => l.path.trim())
@@ -291,14 +308,28 @@ export function GeneratePage() {
       jobStarted: (p) => {
         const e = p as { job_id: string; total_steps: number };
         setLive((prev) =>
-          prev && prev.id === e.job_id ? { ...prev, totalSteps: e.total_steps } : prev,
+          prev && prev.id === e.job_id
+            ? { ...prev, totalSteps: e.total_steps, phase: undefined }
+            : prev,
         );
       },
       jobProgress: (p) => {
-        const e = p as { job_id: string; step: number; total_steps: number; status_line?: string };
+        const e = p as {
+          job_id: string;
+          step: number;
+          total_steps: number;
+          status_line?: string;
+          phase?: string;
+        };
         setLive((prev) =>
           prev && prev.id === e.job_id
-            ? { ...prev, step: e.step, totalSteps: e.total_steps, statusLine: e.status_line }
+            ? {
+                ...prev,
+                step: e.step,
+                totalSteps: e.total_steps,
+                statusLine: e.status_line,
+                phase: e.phase,
+              }
             : prev,
         );
       },
@@ -394,6 +425,8 @@ export function GeneratePage() {
             <span>Famille</span>
             <select value={family} onChange={(e) => {
               setFamily(e.target.value);
+              setFastMode(false);
+              setEnhancePrompt(false);
               const first = caps?.models.find((m) => m.family === e.target.value);
               if (first) applyModelDefaults(first.id);
             }}>
@@ -526,6 +559,55 @@ export function GeneratePage() {
               </button>
             ))}
           </div>
+          {supportsFastMode && fastMode && !isEdit && (
+            <p className="muted hint dim-hint">
+              Sortie upscalée ×4 — génération à 512px puis agrandissement.
+            </p>
+          )}
+
+          {(supportsFastMode || supportsPromptEnhance) && (
+            <div className="field opt-group">
+              <span>Options de tirage</span>
+              {supportsFastMode && (
+                <label className="opt-row">
+                  <span className="opt-text">
+                    <span className="opt-title">Mode rapide</span>
+                    <span className="opt-sub muted">{fastModeNote}</span>
+                  </span>
+                  <span className={`switch ${fastMode ? "switch-on" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={fastMode}
+                      onChange={(e) => setFastMode(e.target.checked)}
+                      aria-label="Mode rapide"
+                    />
+                    <span className="switch-track" aria-hidden>
+                      <span className="switch-thumb" />
+                    </span>
+                  </span>
+                </label>
+              )}
+              {supportsPromptEnhance && (
+                <label className="opt-row">
+                  <span className="opt-text">
+                    <span className="opt-title">Prompt amélioré</span>
+                    <span className="opt-sub muted">{promptEnhanceNote}</span>
+                  </span>
+                  <span className={`switch ${enhancePrompt ? "switch-on" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={enhancePrompt}
+                      onChange={(e) => setEnhancePrompt(e.target.checked)}
+                      aria-label="Prompt amélioré"
+                    />
+                    <span className="switch-track" aria-hidden>
+                      <span className="switch-thumb" />
+                    </span>
+                  </span>
+                </label>
+              )}
+            </div>
+          )}
 
           <div className="field-row">
             <label className="field">
@@ -789,9 +871,13 @@ export function GeneratePage() {
             <>
               <div className="live-head">
                 <span className="exposure-id">Nº {live.id.slice(0, 8)}</span>
-                <span className="live-metrics tnum">
-                  POSE {live.step}/{live.totalSteps || "—"} · {elapsed}s
-                </span>
+                {live.phase ? (
+                  <span className="live-phase mono">{live.phase}</span>
+                ) : (
+                  <span className="live-metrics tnum">
+                    POSE {live.step}/{live.totalSteps || "—"} · {elapsed}s
+                  </span>
+                )}
               </div>
               <ProgressBar
                 value={live.totalSteps > 0 ? (live.step / live.totalSteps) * 100 : 0}
@@ -799,6 +885,9 @@ export function GeneratePage() {
                 glow
                 showPercent
               />
+              {live.phase && (
+                <p className="live-metrics tnum muted">POSE {live.step}/{live.totalSteps || "—"} · {elapsed}s</p>
+              )}
               {live.statusLine && <p className="status-line mono">{live.statusLine}</p>}
               <div className="live-preview">
                 <div className={`live-frame ${live.previewSrc ? "live-frame-active" : ""}`}>
