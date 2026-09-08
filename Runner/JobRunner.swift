@@ -30,7 +30,7 @@ protocol GeneratedJob: AnyObject, Identifiable {
     var statusLine: String { get set }
     var stepTiming: String? { get set }
     var isDenoising: Bool { get set }
-    var createdAt: Date { get }
+    var createdAt: Date { get set }
     var startedAt: Date? { get set }
     var completedAt: Date? { get set }
 }

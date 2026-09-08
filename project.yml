@@ -16,8 +16,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     ENABLE_HARDENED_RUNTIME: YES
     MARKETING_VERSION: "0.6.2"
-    CURRENT_PROJECT_VERSION: "1"
-  configs:
+    CURRENT_PROJECT_VERSION: "1"  configs:
     # Team only on Release so Debug builds stay unsigned/adhoc and don't
     # require a provisioning round-trip. CI archives Release (see
     # .github/workflows/release.yml), overriding DEVELOPMENT_TEAM at build time.
@@ -26,10 +25,18 @@ settings:
     Release:
       DEVELOPMENT_TEAM: XXXXXXXXXX
 
+packages:
+  Superscale:
+    url: https://github.com/tigger-developer/superscale.git
+    from: 1.0.7
+
 targets:
   MLXBits Image Studio:
     type: application
     platform: macOS
+    dependencies:
+      - package: Superscale
+        product: SuperscaleKit
     # Explicit source dirs only — `path: .` swept build artifacts, tooling
     # configs (.swiftlint.yml/.periphery.yml/.jscpd.json), reports, logs, and
     # the built .app/.dmg into the app bundle (dotfile-blind `*.yml` excludes).
@@ -37,6 +44,7 @@ targets:
     sources:
       - App
       - Models
+      - RemoteAccess
       - Runner
       - Stores
       - Utilities
@@ -52,6 +60,11 @@ targets:
       - path: Resources/scenario_prompt.md
         buildPhase: resources
       - path: Resources/scenario_llm_driver.py
+        buildPhase: resources
+      # Pre-built static Web UI (React/Vite). Built with `webui/build-release.sh`;
+      # the folder reference keeps the directory structure inside the bundle.
+      - path: Resources/webui_dist
+        type: folder
         buildPhase: resources
     info:
       path: Resources/Info.plist
@@ -110,6 +123,8 @@ targets:
       - Tests
     dependencies:
       - target: MLXBits Image Studio
+      - package: Superscale
+        product: SuperscaleKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mlxbits.image-studio.tests

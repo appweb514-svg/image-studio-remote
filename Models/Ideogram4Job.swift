@@ -48,7 +48,7 @@ final class Ideogram4Job: Identifiable {
     var statusLine: String = ""
     var stepTiming: String?
     var isDenoising: Bool = false
-    let createdAt: Date
+    var createdAt: Date
     var startedAt: Date?
     var completedAt: Date?
 

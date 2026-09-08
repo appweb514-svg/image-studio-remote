@@ -117,6 +117,15 @@ class AppSettings {
         var keepModelWarm: Bool?
         var warmIdleMinutes: Int?
         var warmTextEncoderPolicy: WarmTextEncoderPolicy?
+        /// Remote Web UI (embedded HTTP server). The access token lives in the
+        /// Keychain, never here.
+        var remoteAccessEnabled: Bool?
+        var remoteAccessPort: Int?
+        var remoteAccessAllowLAN: Bool?
+        var remoteAccessRequireAuth: Bool?
+        /// Superscale (Real-ESRGAN upscaling)
+        var superscaleKeepWarm: Bool?
+        var superscaleFaceEnhance: Bool?
         /// Scenario generator (raw values so future category changes degrade
         /// gracefully instead of failing the whole settings decode)
         var lastScenarioOutline: String?
@@ -477,6 +486,42 @@ class AppSettings {
         didSet { save() }
     }
 
+    // MARK: - Remote Access (embedded Web UI server)
+
+    /// Serve the bundled Web UI + versioned REST API from the app.
+    var remoteAccessEnabled: Bool {
+        didSet { save() }
+    }
+
+    /// TCP port the remote server listens on.
+    var remoteAccessPort: Int {
+        didSet { save() }
+    }
+
+    /// Bind to all interfaces (LAN/VPN). When false the server is loopback-only.
+    /// Enabling this requires explicit user consent in Settings > Remote Access.
+    var remoteAccessAllowLAN: Bool {
+        didSet { save() }
+    }
+
+    /// Require token/session auth for API access. Strongly recommended (and
+    /// forced on in the UI) when LAN access is enabled.
+    var remoteAccessRequireAuth: Bool {
+        didSet { save() }
+    }
+
+    /// Keep the Superscale CoreML model resident between upscales (warm
+    /// residency — skips the model load on consecutive runs).
+    var superscaleKeepWarm: Bool {
+        didSet { save() }
+    }
+
+    /// Run GFPGAN face enhancement after upscaling (requires the separately
+    /// accepted non-commercial face model; superscaleFaceModelInstalled).
+    var superscaleFaceEnhance: Bool {
+        didSet { save() }
+    }
+
     // MARK: - Scenario generator
 
     /// Last outline entered in the scenario generator, restored across launches.
@@ -664,6 +709,12 @@ class AppSettings {
         keepModelWarm = s.keepModelWarm ?? false
         warmIdleMinutes = s.warmIdleMinutes ?? 10
         warmTextEncoderPolicy = s.warmTextEncoderPolicy ?? .auto
+        remoteAccessEnabled = s.remoteAccessEnabled ?? false
+        remoteAccessPort = s.remoteAccessPort ?? 7860
+        remoteAccessAllowLAN = s.remoteAccessAllowLAN ?? false
+        remoteAccessRequireAuth = s.remoteAccessRequireAuth ?? true
+        superscaleKeepWarm = s.superscaleKeepWarm ?? true
+        superscaleFaceEnhance = s.superscaleFaceEnhance ?? false
         lastScenarioOutline = s.lastScenarioOutline ?? ""
         scenarioCategories = s.scenarioCategories
             .map { Set($0.compactMap(ScenarioCategory.init)) }

@@ -20,6 +20,9 @@ struct MLXBitsImageStudioApp: App {
     @State private var loraLibrary = LoraLibraryStore()
     @State private var updateChecker = UpdateChecker()
     @State private var backendModels = BackendModelStore()
+    @State private var remoteEventBus = RemoteAccessEventBus()
+    @State private var generationService: GenerationService
+    @State private var remoteAccess: RemoteAccessStore
 
     var body: some Scene {
         WindowGroup {
@@ -42,10 +45,13 @@ struct MLXBitsImageStudioApp: App {
                 .environment(loraLibrary)
                 .environment(updateChecker)
                 .environment(backendModels)
+                .environment(remoteAccess)
                 .frame(minWidth: 900, minHeight: 600)
                 // Launch-time update check; drives the toolbar badge when a newer
                 // GitHub release exists. Coalesced so multiple windows check once.
                 .task { await updateChecker.check() }
+                // Starts the embedded remote-access server when enabled.
+                .task { remoteAccess.startIfNeeded() }
         }
         .windowResizability(.contentMinSize)
         .commands {
@@ -66,6 +72,7 @@ struct MLXBitsImageStudioApp: App {
                 .environment(gallery)
                 .environment(driverController)
                 .environment(loraLibrary)
+                .environment(remoteAccess)
         }
     }
 
@@ -82,6 +89,29 @@ struct MLXBitsImageStudioApp: App {
         ideogram4Runner.driver = driver
         krea2Runner.driver = driver
         zimageRunner.driver = driver
+        // Remote access: shared generation services + embedded HTTP server.
+        let bus = RemoteAccessEventBus()
+        let service = GenerationService(
+            settings: settings,
+            fluxStore: store,
+            fluxRunner: runner,
+            krea2Store: krea2Store,
+            krea2Runner: krea2Runner,
+            zimageStore: zimageStore,
+            zimageRunner: zimageRunner,
+            coordinator: coordinator,
+            timing: timing,
+            gallery: gallery,
+            bus: bus
+        )
+        service.ideogramStore = ideogram4Store
+        _remoteEventBus = State(initialValue: bus)
+        _generationService = State(initialValue: service)
+        _remoteAccess = State(initialValue: RemoteAccessStore(
+            settings: settings,
+            service: service,
+            bus: bus
+        ))
         // Fold any pre-library default-LoRA list into LibraryLora.isDefault flags.
         loraLibrary.migrateLegacyDefaults(from: settings)
     }

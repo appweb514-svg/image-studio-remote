@@ -12,6 +12,7 @@ struct SettingsView: View {
         case models = "Models"
         case loras = "LoRAs"
         case advanced = "Advanced"
+        case remoteAccess = "Remote Access"
         var id: String {
             rawValue
         }
@@ -53,6 +54,10 @@ struct SettingsView: View {
             advancedTab
                 .tabItem { Label("Advanced", systemImage: "gearshape") }
                 .tag(SettingsTab.advanced)
+
+            RemoteAccessSettingsView()
+                .tabItem { Label("Remote Access", systemImage: "wifi.router") }
+                .tag(SettingsTab.remoteAccess)
         }
         .frame(width: 560, height: 460)
         .onExitCommand { NSApp.keyWindow?.performClose(nil) }

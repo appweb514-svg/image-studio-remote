@@ -1,0 +1,75 @@
+name: Build (unsigned)
+
+# Fork CI: builds the app without Apple Developer signing. Runs the Web UI
+# build, the Swift Testing suite, and uploads the .app (ad-hoc signed) as an
+# artifact. Tag-based signed/notarized releases remain in release.yml and
+# require the upstream secrets.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    env:
+      SCHEME: "MLXBits Image Studio"
+      APP_NAME: "MLXBits Image Studio"
+      PROJECT: "MLXBits Image Studio.xcodeproj"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Build Web UI (React/Vite)
+        run: |
+          cd webui
+          npm ci || npm install
+          npm run build
+          rm -rf ../Resources/webui_dist
+          cp -R dist ../Resources/webui_dist
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Test (Debug)
+        run: |
+          xcodebuild test \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination "platform=macOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet
+
+      - name: Build app (Debug, unsigned)
+        run: |
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -destination "platform=macOS" \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet
+
+      - name: Package
+        run: |
+          cd "build/Build/Products/Debug"
+          ditto -c -k --keepParent "$APP_NAME.app" "$RUNNER_TEMP/$APP_NAME.zip"
+          cd "$GITHUB_WORKSPACE"
+          ls -la "$RUNNER_TEMP/$APP_NAME.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-studio-unsigned
+          path: ${{ runner.temp }}/${{ env.APP_NAME }}.zip
+          retention-days: 14
