@@ -11,7 +11,7 @@ struct RemoteAuthService {
     }
 
     /// Sessions expire after this much inactivity.
-    static let sessionTTL: TimeInterval = 12 * 60 * 60
+    static let sessionTTL: TimeInterval = 30 * 24 * 60 * 60  // 30 jours
     /// Window for the login rate limiter.
     static let rateWindow: TimeInterval = 60
     /// Failed attempts allowed per window per client.

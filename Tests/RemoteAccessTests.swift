@@ -24,7 +24,7 @@ struct RemoteAuthServiceTests {
     }
 
     @Test("Unknown sessions are rejected")
-    func unknownSession() {
+    mutating func unknownSession() {
         var service = RemoteAuthService()
         _ = service.createSession()
         #expect(!service.validateSession("not-a-session"))
