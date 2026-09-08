@@ -313,7 +313,7 @@ def job_row(row) -> dict:
     status = row["status"]
     ui_status = {"queued": "pending", "running": "running", "completed": "completed",
                  "failed": "failed", "cancelled": "cancelled"}.get(status, status)
-    total = int(params.get("steps") or 4)
+    total = int(progress.get("total") or params.get("steps") or 4)
     step = int(progress.get("step") or 0)
     return {
         "id": row["id"], "family": "flux", "status": ui_status,
