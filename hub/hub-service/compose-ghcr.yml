@@ -8,28 +8,31 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # URLs du worker mflux (Mac mini), essayées dans l'ordre :
-      # NetBird puis IP LAN (à compléter avec l'IP LAN de la mini).
-      WORKER_URL: http://100.102.122.144:8899
+      # Token partagé avec l'agent pull de la Mac mini (mode pull : le hub
+      # n'appelle jamais la mini, c'est elle qui vient chercher ses jobs).
       WORKER_TOKEN: klein-4b
       ADMIN_USER: gildas
       ADMIN_PASSWORD: Studio2026!
+      # Domaine public du studio (routage Traefik) + réseau frontal :
+      APP_DOMAIN: ${APP_DOMAIN:-imgstudio.int.labvirtuel.fr}
+      TRAEFIK_NETWORK: ${TRAEFIK_NETWORK:-dokploy-network}
       STUDIO_DATA: /data
       WEBUI_DIST: /srv/webui
     volumes:
       - studio-data:/data
     networks:
-      - dokploy-network
+      - frontend
     labels:
       - traefik.enable=true
-      - traefik.http.routers.imgstudio.rule=Host(`imgstudio.int.labvirtuel.fr`)
+      - traefik.http.routers.imgstudio.rule=Host(`${APP_DOMAIN:-imgstudio.int.labvirtuel.fr}`)
       - traefik.http.routers.imgstudio.entrypoints=web
       - traefik.http.routers.imgstudio.service=imgstudio
       - traefik.http.services.imgstudio.loadbalancer.server.port=8000
 
 networks:
-  dokploy-network:
+  frontend:
     external: true
+    name: ${TRAEFIK_NETWORK:-dokploy-network}
 
 volumes:
   studio-data:
