@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.gildas.worker-pull</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/gildas/mflux-env/bin/python</string>
+    <string>/Users/gildas/mflux-api/worker-pull.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Le hub est joignable depuis la mini (LAN) ; NetBird en secours -->
+    <key>HUB_URL</key><string>http://10.10.0.13:8000</string>
+    <key>WORKER_TOKEN</key><string>klein-4b</string>
+    <key>MFLUX_BIN</key><string>/Users/gildas/mflux-env/bin</string>
+    <key>MODEL_REPO</key><string>ar9av/FLUX.2-klein-4B-mflux-4bit</string>
+    <key>BASE_MODEL</key><string>flux2-klein-4b</string>
+  </dict>
+  <key>WorkingDirectory</key><string>/Users/gildas/mflux-api</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/gildas/mflux-api/worker-pull.log</string>
+  <key>StandardErrorPath</key><string>/Users/gildas/mflux-api/worker-pull.log</string>
+</dict>
+</plist>

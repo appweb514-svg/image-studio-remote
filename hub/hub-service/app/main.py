@@ -1,13 +1,19 @@
 """MLXBits Image Studio — hub Proxmox.
 
 Sert le frontend statique, gère l'authentification (login utilisateur/mot de
-passe), stocke les images et leurs métadonnées (SQLite + volume), et pilote
-le worker mflux sur la Mac mini via NetBird (proxy API + SSE).
+passe), stocke les images et leurs métadonnées (SQLite + volume).
+
+Architecture "pull" : le hub possède la file de jobs, et le worker mflux sur
+la Mac mini vient les chercher (polling). Aucun accès réseau entrant vers la
+mini n'est nécessaire — NetBird devient optionnel, les coupures sont
+absorbées par le polling.
 
 Le navigateur ne parle qu'au hub. La mini n'est jamais exposée.
 """
+import base64
 import json
 import os
+import queue
 import secrets
 import sqlite3
 import threading
@@ -15,31 +21,23 @@ import time
 import uuid
 from pathlib import Path
 
-import requests
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 DATA = Path(os.environ.get("STUDIO_DATA", "/data"))
 IMAGES_DIR = DATA / "images"
 UPLOADS_DIR = DATA / "uploads"
+PREVIEWS_DIR = DATA / "previews"
 DB_PATH = DATA / "studio.db"
-# Plusieurs URLs possibles (NetBird + LAN), séparées par des virgules :
-# le hub essaie chacune jusqu'à ce qu'une réponde.
-WORKER_URLS = [
-    u.strip().rstrip("/")
-    for u in os.environ.get(
-        "WORKER_URL", "http://100.102.122.144:8899"
-    ).split(",")
-    if u.strip()
-]
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN", "klein-4b")
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "studio")
 COOKIE = "studio_session"
 SESSION_TTL = 30 * 24 * 3600  # 30 jours
+HEARTBEAT_TTL = 60  # worker considéré en ligne si heartbeat < 60 s
 
-for d in (DATA, IMAGES_DIR, UPLOADS_DIR):
+for d in (DATA, IMAGES_DIR, UPLOADS_DIR, PREVIEWS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="MLXBits Image Studio hub")
@@ -48,7 +46,7 @@ app = FastAPI(title="MLXBits Image Studio hub")
 # ------------------------------------------------------------------ storage
 
 def db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -74,30 +72,48 @@ def init_db():
                 token TEXT PRIMARY KEY,
                 created_at REAL NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS worker_jobs (
+                id TEXT PRIMARY KEY,
+                kind TEXT DEFAULT 'generate',
+                params_json TEXT NOT NULL,
+                status TEXT DEFAULT 'queued',
+                cancel_requested INTEGER DEFAULT 0,
+                progress_json TEXT DEFAULT '{}',
+                preview_path TEXT,
+                output_image_id TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS uploads (
+                id TEXT PRIMARY KEY,
+                filename TEXT,
+                path TEXT NOT NULL,
+                mime TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS worker_state (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at REAL NOT NULL
+            );
             """
         )
 
 
 init_db()
 
+# ------------------------------------------------------------ event bus SSE
 
-def worker_headers():
-    return {"Authorization": "Bearer " + WORKER_TOKEN}
-
-
-class WorkerUnreachable(Exception):
-    pass
+EVENT_QUEUES: list = []
+EVENT_LOCK = threading.Lock()
 
 
-def worker(method: str, path: str, **kwargs):
-    last_error: Exception | None = None
-    for base in WORKER_URLS:
-        try:
-            return requests.request(method, base + path, headers=worker_headers(),
-                                    timeout=kwargs.pop("timeout", 12), **kwargs)
-        except requests.RequestException as exc:
-            last_error = exc
-    raise WorkerUnreachable(str(last_error))
+def emit_local(event: str, payload: dict):
+    frame = f"event: {event}\ndata: {json.dumps(payload)}\r\n\r\n"
+    with EVENT_LOCK:
+        for q in list(EVENT_QUEUES):
+            q.put(frame)
 
 
 # --------------------------------------------------------------------- auth
@@ -113,6 +129,13 @@ def check_session(request: Request) -> bool:
 
 def require_auth(request: Request):
     if not check_session(request):
+        raise HTTPException(401, "unauthorized")
+
+
+def require_worker(request: Request):
+    auth = request.headers.get("Authorization", "")
+    token = request.query_params.get("worker_token", "")
+    if auth != "Bearer " + WORKER_TOKEN and token != WORKER_TOKEN:
         raise HTTPException(401, "unauthorized")
 
 
@@ -142,11 +165,8 @@ def me(request: Request):
     return {"username": ADMIN_USER}
 
 
-# ------------------------------------------------------ proxied worker API
+# ------------------------------------------------------------- static data
 
-# Réponses statiques quand le worker est injoignable : la Web UI construit
-# le formulaire de génération depuis /capabilities, et ne doit jamais
-# recevoir de 500 au boot.
 STATIC_CAPABILITIES = {
     "families": [{"id": "flux", "display_name": "FLUX.2", "web_enqueue": True,
                   "supports_edit": True, "max_edit_images": 4}],
@@ -175,32 +195,39 @@ STATIC_MODELS = [
      "repo_url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B"},
 ]
 
-PASS_THROUGH_GET = ("/api/v1/status", "/api/v1/capabilities", "/api/v1/models",
-                    "/api/v1/queue", "/api/v1/presets")
+UPSCALE_MODELS = [
+    {"name": "realesrgan-x4plus", "display_name": "General photo (4×)", "scale": 4,
+     "tile_size": 512, "is_default": True, "installed": False, "downloading": False,
+     "supports_face_enhance": False,
+     "short_description": "Photos générales ×4",
+     "detailed_description": "Modèle par défaut (à installer sur le worker)."},
+    {"name": "realesrgan-x2plus", "display_name": "General photo (2×)", "scale": 2,
+     "tile_size": 512, "is_default": False, "installed": False, "downloading": False,
+     "supports_face_enhance": False,
+     "short_description": "Photos générales ×2",
+     "detailed_description": "Upscale léger, fidèle à la source."},
+]
 
 
-@app.get("/api/v1/status")
-def status():
-    worker_payload = None
-    worker_error = None
+def worker_online() -> bool:
+    with db() as conn:
+        row = conn.execute("SELECT updated_at FROM worker_state WHERE key='heartbeat'").fetchone()
+    return bool(row and time.time() - row["updated_at"] < HEARTBEAT_TTL)
+
+
+def worker_info() -> dict:
+    with db() as conn:
+        row = conn.execute("SELECT value FROM worker_state WHERE key='info'").fetchone()
     try:
-        # Timeout court : la page de login doit s'afficher vite même si le
-        # worker est injoignable.
-        r = worker("GET", "/api/v1/status", timeout=4)
-        if r.status_code == 200:
-            worker_payload = r.json()
-    except Exception as exc:
-        worker_error = str(exc)
+        return json.loads(row["value"]) if row else {}
+    except Exception:
+        return {}
 
-    if worker_payload:
-        worker_payload["worker_online"] = True
-        return JSONResponse(worker_payload)
 
-    # Worker down : réponse complète quand même avec les infos locales du hub
-    # (le frontend accède directement à system.memory, storage, queue.*).
+def hub_system() -> dict:
     import platform
     import shutil
-    total_mem_gb = None
+    total_mem_gb = 0.0
     try:
         with open("/proc/meminfo") as f:
             for line in f:
@@ -210,246 +237,426 @@ def status():
     except OSError:
         pass
     disk = shutil.disk_usage(DATA)
-    return JSONResponse({
+    return {
+        "chip": f"Proxmox ({platform.machine()})",
+        "chip_generation": platform.machine(),
+        "memory": {"total_gb": total_mem_gb},
+        "storage": {"free_gb": round(disk.free / 1073741824.0, 1),
+                    "total_gb": round(disk.total / 1073741824.0, 1)},
+    }
+
+
+# ------------------------------------------------------------------ status
+
+@app.get("/api/v1/status")
+def status():
+    online = worker_online()
+    info = worker_info()
+    with db() as conn:
+        pending = conn.execute(
+            "SELECT COUNT(*) c FROM worker_jobs WHERE status IN ('queued','running')").fetchone()["c"]
+        running = conn.execute(
+            "SELECT COUNT(*) c FROM worker_jobs WHERE status='running'").fetchone()["c"]
+    system = hub_system()
+    system["loaded_model"] = info.get("model")
+    system["loaded_model_memory_gb"] = info.get("model_memory_gb")
+    system["queue_length"] = pending
+    versions = {"app": "hub-2.0"}
+    if info.get("mflux"):
+        versions["mflux"] = info["mflux"]
+    system["versions"] = versions
+    return {
         "app": "MLXBits Image Studio",
-        "worker_online": False,
-        "worker_error": worker_error,
+        "worker_online": online,
         "remoteAccess": {"is_running": True, "allow_lan": True,
-                         "require_auth": True, "connected_clients": 0},
-        "system": {
-            "chip": f"Proxmox ({platform.machine()})",
-            "chip_generation": platform.machine(),
-            "memory": {"total_gb": total_mem_gb or 0.0},
-            "storage": {"free_gb": round(disk.free / 1073741824.0, 1),
-                        "total_gb": round(disk.total / 1073741824.0, 1)},
-            "queue_length": 0,
-            "versions": {"app": "hub-1.0"},
-        },
-        "queue": {"pending": 0, "running_flux": False,
+                         "require_auth": True, "connected_clients": len(EVENT_QUEUES)},
+        "system": system,
+        "queue": {"pending": pending, "running_flux": running > 0,
                   "running_krea2": False, "running_zimage": False},
-    })
+    }
 
 
 @app.get("/api/v1/capabilities")
 def capabilities():
-    try:
-        return JSONResponse(worker("GET", "/api/v1/capabilities").json())
-    except Exception:
-        return JSONResponse(STATIC_CAPABILITIES)
+    return JSONResponse(STATIC_CAPABILITIES)
 
 
 @app.get("/api/v1/models")
 def models():
-    try:
-        return JSONResponse(worker("GET", "/api/v1/models").json())
-    except Exception:
-        return JSONResponse(STATIC_MODELS)
+    return JSONResponse(STATIC_MODELS)
 
 
-@app.get("/api/v1/queue")
-def queue(request: Request):
+@app.get("/api/v1/presets")
+def presets(request: Request):
     require_auth(request)
-    try:
-        return JSONResponse(worker("GET", "/api/v1/queue").json())
-    except Exception:
-        return JSONResponse([])
+    return JSONResponse({"templates": [], "model_defaults": []})
 
 
-@app.get("/api/v1/jobs/{job_id}")
-def get_job(job_id: str, request: Request):
-    require_auth(request)
-    return JSONResponse(worker("GET", f"/api/v1/jobs/{job_id}").json())
+# -------------------------------------------------------------------- jobs
 
-
-@app.get("/api/v1/jobs/{job_id}/preview")
-def job_preview(job_id: str, request: Request):
-    require_auth(request)
-    r = worker("GET", f"/api/v1/jobs/{job_id}/preview", timeout=60)
-    return Response(r.content, media_type=r.headers.get("Content-Type", "image/png"))
+def job_row(row) -> dict:
+    params = json.loads(row["params_json"] or "{}")
+    progress = json.loads(row["progress_json"] or "{}")
+    status = row["status"]
+    ui_status = {"queued": "pending", "running": "running", "completed": "completed",
+                 "failed": "failed", "cancelled": "cancelled"}.get(status, status)
+    total = int(params.get("steps") or 4)
+    step = int(progress.get("step") or 0)
+    return {
+        "id": row["id"], "family": "flux", "status": ui_status,
+        "prompt": params.get("prompt"), "model": params.get("model") or "flux2-klein-4b",
+        "width": params.get("width", 512), "height": params.get("height", 512),
+        "steps": params.get("steps", 4), "guidance": params.get("guidance", 1.0),
+        "seed": params.get("seed"), "resolved_seed": params.get("seed"),
+        "current_step": step, "total_steps": total,
+        "progress": step / max(total, 1),
+        "has_image_input": bool(params.get("edit_mode")),
+        "output_path": f"/api/v1/images/{row['output_image_id']}" if row["output_image_id"] else None,
+        "output_paths": [f"/api/v1/images/{row['output_image_id']}"] if row["output_image_id"] else [],
+        "board": params.get("board", "Default"),
+        "created_at": row["created_at"],
+        "preview_url": f"/api/v1/jobs/{row['id']}/preview",
+        "error": row["error"],
+    }
 
 
 @app.post("/api/v1/generate")
 def generate(request: Request, body: dict):
     require_auth(request)
-    r = worker("POST", "/api/v1/generate", json=body)
-    return JSONResponse(r.json(), status_code=r.status_code)
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "prompt requis")
+    job_id = uuid.uuid4().hex[:12]
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO worker_jobs
+               (id, kind, params_json, status, created_at, updated_at)
+               VALUES (?,?,?,?,?,?)""",
+            (job_id, "generate", json.dumps(body), "queued",
+             time.strftime("%Y-%m-%dT%H:%M:%S"), time.time()),
+        )
+    emit_local("jobCreated", {"job_id": job_id, "family": "flux"})
+    emit_local("queueChanged", {})
+    return {"ok": True, "job_id": job_id}
+
+
+@app.get("/api/v1/queue")
+def queue(request: Request):
+    require_auth(request)
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM worker_jobs ORDER BY created_at DESC LIMIT 100").fetchall()
+    return [job_row(r) for r in rows]
+
+
+@app.get("/api/v1/jobs/{job_id}")
+def get_job(job_id: str, request: Request):
+    require_auth(request)
+    with db() as conn:
+        row = conn.execute("SELECT * FROM worker_jobs WHERE id=?", (job_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "not found")
+    return job_row(row)
+
+
+@app.get("/api/v1/jobs/{job_id}/preview")
+def job_preview(job_id: str, request: Request):
+    require_auth(request)
+    with db() as conn:
+        row = conn.execute("SELECT * FROM worker_jobs WHERE id=?", (job_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "not found")
+    if row["output_image_id"]:
+        with db() as conn:
+            img = conn.execute("SELECT path FROM images WHERE id=?",
+                               (row["output_image_id"],)).fetchone()
+        if img and Path(img["path"]).exists():
+            return FileResponse(img["path"], media_type="image/png")
+    preview = PREVIEWS_DIR / f"{job_id}.jpg"
+    if preview.exists():
+        return FileResponse(preview, media_type="image/jpeg")
+    raise HTTPException(404, "preview pas encore disponible")
 
 
 @app.post("/api/v1/jobs/{job_id}/cancel")
 def cancel_job(job_id: str, request: Request):
     require_auth(request)
-    r = worker("POST", f"/api/v1/jobs/{job_id}/cancel")
-    return JSONResponse(r.json(), status_code=r.status_code)
+    with db() as conn:
+        row = conn.execute("SELECT status FROM worker_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "not found")
+        if row["status"] == "queued":
+            conn.execute("UPDATE worker_jobs SET status='cancelled', updated_at=? WHERE id=?",
+                         (time.time(), job_id))
+            emit_local("jobCancelled", {"job_id": job_id})
+        elif row["status"] == "running":
+            conn.execute("UPDATE worker_jobs SET cancel_requested=1, updated_at=? WHERE id=?",
+                         (time.time(), job_id))
+        emit_local("queueChanged", {})
+    return {"ok": True}
 
+
+@app.post("/api/v1/jobs/{job_id}/retry")
+@app.post("/api/v1/jobs/{job_id}/duplicate")
+def retry_job(job_id: str, request: Request):
+    require_auth(request)
+    with db() as conn:
+        row = conn.execute("SELECT params_json FROM worker_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "not found")
+        new_id = uuid.uuid4().hex[:12]
+        conn.execute(
+            """INSERT INTO worker_jobs
+               (id, kind, params_json, status, created_at, updated_at)
+               VALUES (?,?,?,?,?,?)""",
+            (new_id, "generate", row["params_json"], "queued",
+             time.strftime("%Y-%m-%dT%H:%M:%S"), time.time()),
+        )
+    emit_local("jobCreated", {"job_id": new_id, "family": "flux"})
+    emit_local("queueChanged", {})
+    return {"ok": True, "job_id": new_id}
+
+
+@app.delete("/api/v1/jobs/{job_id}")
+def delete_job(job_id: str, request: Request):
+    require_auth(request)
+    with db() as conn:
+        row = conn.execute("SELECT status FROM worker_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "not found")
+        if row["status"] == "running":
+            raise HTTPException(409, "job en cours — annulez-le d'abord")
+        conn.execute("DELETE FROM worker_jobs WHERE id=?", (job_id,))
+    emit_local("queueChanged", {})
+    return {"ok": True}
+
+
+@app.patch("/api/v1/queue/reorder")
+def reorder(request: Request, body: dict):
+    require_auth(request)
+    order = [i for i in (body.get("order") or []) if isinstance(i, str)]
+    base = time.time()
+    with db() as conn:
+        for index, job_id in enumerate(order):
+            row = conn.execute(
+                "SELECT status FROM worker_jobs WHERE id=?", (job_id,)).fetchone()
+            if row and row["status"] in ("queued",):
+                conn.execute(
+                    "UPDATE worker_jobs SET created_at=?, updated_at=? WHERE id=?",
+                    (time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(base + index)),
+                     time.time(), job_id),
+                )
+    emit_local("queueChanged", {})
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------ uploads
 
 @app.post("/api/v1/uploads")
 def uploads(request: Request, body: dict):
     require_auth(request)
-    # Forwarded to the worker (edit mode needs worker-local paths) and kept
-    # locally for the archive.
-    r = worker("POST", "/api/v1/uploads", json=body, timeout=120)
-    if r.status_code == 200:
-        import base64
-        raw = body.get("data_base64", "")
+    raw = body.get("data_base64", "")
+    mime = (body.get("mime") or "").lower()
+    ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(mime)
+    if not ext:
+        raise HTTPException(415, "mime non supporté")
+    try:
+        data = base64.b64decode(raw)
+    except Exception:
+        raise HTTPException(400, "base64 invalide")
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(413, "trop volumineux (max 20 Mo)")
+    # Vérification magic bytes (png/jpeg/webp).
+    heads = {"png": b"\x89PNG", "jpg": b"\xff\xd8\xff", "webp": b"RIFF"}
+    if not data.startswith(heads[ext]) or (ext == "webp" and data[8:12] != b"WEBP"):
+        raise HTTPException(415, "contenu incompatible avec le type déclaré")
+    upload_id = uuid.uuid4().hex[:16]
+    dest = UPLOADS_DIR / f"{upload_id}.{ext}"
+    dest.write_bytes(data)
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO uploads (id, filename, path, mime, created_at) VALUES (?,?,?,?,?)",
+            (upload_id, body.get("filename") or f"{upload_id}.{ext}", str(dest), mime,
+             time.strftime("%Y-%m-%dT%H:%M:%S")),
+        )
+    # Le worker télécharge via /worker/files/<id>.
+    return {"id": upload_id, "path": f"hub://{upload_id}"}
+
+
+# ------------------------------------------------------- worker pull API
+
+def touch_heartbeat(info: dict | None = None):
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO worker_state (key, value, updated_at) VALUES ('heartbeat','',?) "
+            "ON CONFLICT(key) DO UPDATE SET updated_at=excluded.updated_at",
+            (time.time(),),
+        )
+        if info is not None:
+            conn.execute(
+                "INSERT INTO worker_state (key, value, updated_at) VALUES ('info',?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (json.dumps(info), time.time()),
+            )
+
+
+@app.get("/api/v1/worker/jobs/next")
+def worker_next(request: Request):
+    require_worker(request)
+    touch_heartbeat()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT * FROM worker_jobs WHERE status='queued' ORDER BY created_at ASC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return JSONResponse({"job": None})
+        conn.execute("UPDATE worker_jobs SET status='running', updated_at=? WHERE id=?",
+                     (time.time(), row["id"]))
+    emit_local("jobStarted", {"job_id": row["id"], "family": "flux",
+                              "total_steps": json.loads(row["params_json"] or "{}").get("steps", 4)})
+    emit_local("queueChanged", {})
+    return {"job": {"id": row["id"], "params": json.loads(row["params_json"] or "{}")}}
+
+
+@app.get("/api/v1/worker/jobs/{job_id}/status")
+def worker_job_status(job_id: str, request: Request):
+    require_worker(request)
+    touch_heartbeat()
+    with db() as conn:
+        row = conn.execute(
+            "SELECT status, cancel_requested FROM worker_jobs WHERE id=?", (job_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "not found")
+    return {"status": row["status"], "cancel_requested": bool(row["cancel_requested"])}
+
+
+@app.post("/api/v1/worker/jobs/{job_id}/progress")
+def worker_progress(job_id: str, request: Request, body: dict):
+    require_worker(request)
+    touch_heartbeat()
+    step, total = int(body.get("step") or 0), int(body.get("total") or 0)
+    preview_b64 = body.get("preview_b64")
+    with db() as conn:
+        conn.execute(
+            "UPDATE worker_jobs SET progress_json=?, updated_at=? WHERE id=?",
+            (json.dumps({"step": step, "total": total}), time.time(), job_id),
+        )
+    if preview_b64:
         try:
-            data = base64.b64decode(raw)
-            ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(
-                (body.get("mime") or "").lower(), "png")
-            dest = UPLOADS_DIR / f"{uuid.uuid4().hex}.{ext}"
-            dest.write_bytes(data)
+            (PREVIEWS_DIR / f"{job_id}.jpg").write_bytes(base64.b64decode(preview_b64))
+            emit_local("jobPreview", {"job_id": job_id,
+                                      "jpeg_base64": preview_b64,
+                                      "step": step, "total_steps": total})
         except Exception:
             pass
-    return JSONResponse(r.json(), status_code=r.status_code)
+    emit_local("jobProgress", {"job_id": job_id, "step": step, "total_steps": total})
+    return {"ok": True}
 
 
-# ------------------------------------------------------------- SSE pipeline
-
-@app.get("/api/v1/events")
-def events(request: Request):
-    require_auth(request)
-
-    def stream():
-        import base64 as b64
-        connected = None
-        last_error = None
-        for base in WORKER_URLS:
-            try:
-                connected = requests.get(base + "/api/v1/events", headers=worker_headers(),
-                                         stream=True, timeout=(10, None))
-                break
-            except requests.RequestException as exc:
-                last_error = exc
-        if connected is None:
-            # Commentaire SSE (ignoré par EventSource) : pas d'erreur affichée,
-            # le navigateur reconnecte automatiquement.
-            yield ": worker hors ligne, nouvelle tentative de connexion\r\n\r\n"
-            return
-        with connected as upstream:
-            event_name = None
-            for raw in upstream.iter_lines(decode_unicode=True):
-                if raw is None:
-                    continue
-                line = raw.rstrip("\r")
-                if line.startswith("event: "):
-                    event_name = line[7:].strip()
-                    continue
-                if line.startswith("data: ") and event_name:
-                    payload = line[6:]
-                    if event_name == "jobCompleted":
-                        try:
-                            data = json.loads(payload)
-                            image_id = persist_completed_image(data, b64)
-                            data["image_id"] = image_id
-                            payload = json.dumps(data)
-                        except Exception:
-                            pass
-                    yield f"event: {event_name}\ndata: {payload}\r\n\r\n"
-                    event_name = None
-                elif line == "":
-                    continue
-                else:
-                    yield raw + "\r\n"
-
-    return StreamingResponse(stream(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-store",
-                                      "X-Accel-Buffering": "no"})
-
-
-def persist_completed_image(data: dict, b64) -> str:
-    """On jobCompleted: fetch the final image from the worker, store it in the
-    Proxmox volume + DB, return the hub image id."""
-    job_id = data.get("job_id")
-    image_id = uuid.uuid4().hex[:16]
-    r = worker("GET", f"/api/v1/jobs/{job_id}/preview", timeout=120)
-    if r.status_code != 200:
-        return ""
-    dest = IMAGES_DIR / f"{image_id}.png"
-    dest.write_bytes(r.content)
-
-    meta = {}
+@app.post("/api/v1/worker/jobs/{job_id}/complete")
+def worker_complete(job_id: str, request: Request, body: dict):
+    require_worker(request)
+    touch_heartbeat()
     try:
-        meta = worker("GET", f"/api/v1/jobs/{job_id}").json()
+        image_bytes = base64.b64decode(body.get("image_b64", ""))
     except Exception:
-        pass
-    params = meta or {}
+        raise HTTPException(400, "image_b64 invalide")
+    if not image_bytes:
+        raise HTTPException(400, "image vide")
     with db() as conn:
+        row = conn.execute("SELECT params_json FROM worker_jobs WHERE id=?", (job_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "not found")
+        params = json.loads(row["params_json"] or "{}")
+        image_id = uuid.uuid4().hex[:16]
+        dest = IMAGES_DIR / f"{image_id}.png"
+        dest.write_bytes(image_bytes)
+        seed = body.get("seed", params.get("seed"))
         conn.execute(
             """INSERT INTO images (id, filename, path, board, source, prompt,
                negative_prompt, model, seed, width, height, steps, guidance,
                meta_json, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (image_id, f"{image_id}.png", str(dest), params.get("board") or "Default",
-             "generation", params.get("prompt"), None, params.get("model"),
-             params.get("resolved_seed") or params.get("seed"), params.get("width"),
+             "generation", params.get("prompt"), params.get("negative_prompt"),
+             params.get("model") or "flux2-klein-4b", seed, params.get("width"),
              params.get("height"), params.get("steps"), params.get("guidance"),
              json.dumps(params), time.strftime("%Y-%m-%dT%H:%M:%S")),
         )
-    return image_id
+        conn.execute(
+            "UPDATE worker_jobs SET status='completed', output_image_id=?, updated_at=? WHERE id=?",
+            (image_id, time.time(), job_id),
+        )
+    (PREVIEWS_DIR / f"{job_id}.jpg").unlink(missing_ok=True)
+    emit_local("jobCompleted", {"job_id": job_id, "family": "flux",
+                                "image_id": image_id, "seed": seed})
+    emit_local("queueChanged", {})
+    return {"ok": True, "image_id": image_id}
 
 
-# ------------------------------------------------- upscale (gracieux)
+@app.post("/api/v1/worker/jobs/{job_id}/fail")
+def worker_fail(job_id: str, request: Request, body: dict):
+    require_worker(request)
+    touch_heartbeat()
+    error = body.get("error") or "échec inconnu"
+    if error == "__cancelled__":
+        with db() as conn:
+            conn.execute("UPDATE worker_jobs SET status='cancelled', updated_at=? WHERE id=?",
+                         (time.time(), job_id))
+        emit_local("jobCancelled", {"job_id": job_id})
+    else:
+        with db() as conn:
+            conn.execute("UPDATE worker_jobs SET status='failed', error=?, updated_at=? WHERE id=?",
+                         (error, time.time(), job_id))
+        emit_local("jobFailed", {"job_id": job_id, "message": error})
+    emit_local("queueChanged", {})
+    return {"ok": True}
 
-UPSCALE_MODELS = [
-    {"name": "realesrgan-x4plus", "display_name": "General photo (4×)", "scale": 4,
-     "tile_size": 512, "is_default": True, "installed": False, "downloading": False,
-     "supports_face_enhance": False,
-     "short_description": "Photos générales ×4",
-     "detailed_description": "Modèle par défaut (à installer)."},
-    {"name": "realesrgan-x2plus", "display_name": "General photo (2×)", "scale": 2,
-     "tile_size": 512, "is_default": False, "installed": False, "downloading": False,
-     "supports_face_enhance": False,
-     "short_description": "Photos générales ×2",
-     "detailed_description": "Upscale léger, fidèle à la source."},
-]
+
+@app.post("/api/v1/worker/heartbeat")
+def worker_heartbeat(request: Request, body: dict):
+    require_worker(request)
+    touch_heartbeat(body)
+    return {"ok": True}
 
 
-@app.get("/api/v1/upscale/models")
-def upscale_models(request: Request):
+@app.get("/api/v1/worker/files/{upload_id}")
+def worker_file(upload_id: str, request: Request):
+    require_worker(request)
+    with db() as conn:
+        row = conn.execute("SELECT path, mime FROM uploads WHERE id=?", (upload_id,)).fetchone()
+    if not row or not Path(row["path"]).exists():
+        raise HTTPException(404, "not found")
+    return FileResponse(row["path"], media_type=row["mime"] or "image/png")
+
+
+# -------------------------------------------------------------------- SSE
+
+@app.get("/api/v1/events")
+def events(request: Request):
     require_auth(request)
-    try:
-        return JSONResponse(worker("GET", "/api/v1/upscale/models").json())
-    except Exception:
-        return JSONResponse(UPSCALE_MODELS)
+
+    def stream():
+        q: queue.Queue = queue.Queue()
+        with EVENT_LOCK:
+            EVENT_QUEUES.append(q)
+        try:
+            while True:
+                try:
+                    yield q.get(timeout=20)
+                except queue.Empty:
+                    yield ": keepalive\r\n\r\n"
+        finally:
+            with EVENT_LOCK:
+                if q in EVENT_QUEUES:
+                    EVENT_QUEUES.remove(q)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-store",
+                                      "X-Accel-Buffering": "no"})
 
 
-@app.get("/api/v1/upscale/recommendations")
-def upscale_recommendations(request: Request, width: int = 0, height: int = 0,
-                            image_id: str = "", model: str = ""):
-    require_auth(request)
-    w, h = width, height
-    if not w or not h:
-        if image_id:
-            with db() as conn:
-                row = conn.execute(
-                    "SELECT width, height FROM images WHERE id=?", (image_id,)).fetchone()
-            if row:
-                w, h = row["width"] or 0, row["height"] or 0
-        if not w or not h:
-            raise HTTPException(400, "width/height ou image_id requis")
-    scale = 4 if "x2" not in (model or "").lower() else 2
-    recs = [
-        {"label": f"Natif ×{scale}", "width": w * scale, "height": h * scale,
-         "note": "Real-ESRGAN natif.", "recommended": w * scale <= 4096},
-        {"label": "×2", "width": w * 2, "height": h * 2,
-         "note": "Plus fidèle à la source.", "recommended": False},
-    ]
-    return JSONResponse(recs)
-
-
-@app.get("/api/v1/upscale/jobs")
-def upscale_jobs(request: Request):
-    require_auth(request)
-    return JSONResponse([])
-
-
-@app.post("/api/v1/upscale/jobs")
-def upscale_start(request: Request, body: dict):
-    require_auth(request)
-    try:
-        r = worker("POST", "/api/v1/upscale/jobs", json=body, timeout=30)
-        return JSONResponse(r.json(), status_code=r.status_code)
-    except Exception as exc:
-        raise HTTPException(503, f"upscale indisponible (worker injoignable): {exc}")
+# ------------------------------------------------------------ gallery (DB)
 
 @app.get("/api/v1/history")
 def history(request: Request):
@@ -478,12 +685,6 @@ def image_dto(row):
             "quantize": None, "loras": [],
         },
     }
-
-
-@app.get("/api/v1/presets")
-def presets(request: Request):
-    require_auth(request)
-    return JSONResponse({"templates": [], "model_defaults": []})
 
 
 @app.get("/api/v1/images/{image_id}")
@@ -526,7 +727,7 @@ def delete_image(image_id: str, request: Request):
 
 @app.post("/api/v1/gallery/{image_id}/reuse")
 @app.post("/api/v1/gallery/{image_id}/variation")
-def reuse(image_id: str, request: Request, body: dict = None):
+def reuse(image_id: str, request: Request):
     require_auth(request)
     variation = request.url.path.endswith("/variation")
     with db() as conn:
@@ -539,8 +740,61 @@ def reuse(image_id: str, request: Request, body: dict = None):
     }
     if variation:
         payload["seed"] = secrets.randbelow(2**31)
-    r = worker("POST", "/api/v1/generate", json=payload)
-    return JSONResponse(r.json(), status_code=r.status_code)
+    job_id = uuid.uuid4().hex[:12]
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO worker_jobs
+               (id, kind, params_json, status, created_at, updated_at)
+               VALUES (?,?,?,?,?,?)""",
+            (job_id, "generate", json.dumps(payload), "queued",
+             time.strftime("%Y-%m-%dT%H:%M:%S"), time.time()),
+        )
+    emit_local("jobCreated", {"job_id": job_id, "family": "flux"})
+    emit_local("queueChanged", {})
+    return {"ok": True, "job_id": job_id}
+
+
+# ---------------------------------------------------------------- upscale
+
+@app.get("/api/v1/upscale/models")
+def upscale_models(request: Request):
+    require_auth(request)
+    return JSONResponse(UPSCALE_MODELS)
+
+
+@app.get("/api/v1/upscale/recommendations")
+def upscale_recommendations(request: Request, width: int = 0, height: int = 0,
+                            image_id: str = "", model: str = ""):
+    require_auth(request)
+    w, h = width, height
+    if not w or not h:
+        if image_id:
+            with db() as conn:
+                row = conn.execute(
+                    "SELECT width, height FROM images WHERE id=?", (image_id,)).fetchone()
+            if row:
+                w, h = row["width"] or 0, row["height"] or 0
+        if not w or not h:
+            raise HTTPException(400, "width/height ou image_id requis")
+    scale = 2 if "x2" in (model or "").lower() else 4
+    return JSONResponse([
+        {"label": f"Natif ×{scale}", "width": w * scale, "height": h * scale,
+         "note": "Real-ESRGAN natif.", "recommended": w * scale <= 4096},
+        {"label": "×2", "width": w * 2, "height": h * 2,
+         "note": "Plus fidèle à la source.", "recommended": False},
+    ])
+
+
+@app.get("/api/v1/upscale/jobs")
+def upscale_jobs(request: Request):
+    require_auth(request)
+    return JSONResponse([])
+
+
+@app.post("/api/v1/upscale/jobs")
+def upscale_start(request: Request, body: dict):
+    require_auth(request)
+    raise HTTPException(503, "upscale non disponible sur ce worker pour l'instant")
 
 
 # ------------------------------------------------------------------ static
