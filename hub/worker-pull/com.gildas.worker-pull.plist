@@ -11,7 +11,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <!-- Le hub est joignable depuis la mini (LAN) ; NetBird en secours -->
-    <key>HUB_URL</key><string>http://10.10.0.13:8000</string>
+    <key>HUB_URL</key><string>http://imgstudio.int.labvirtuel.fr</string>
     <key>WORKER_TOKEN</key><string>klein-4b</string>
     <key>MFLUX_BIN</key><string>/Users/gildas/mflux-env/bin</string>
     <key>MODEL_REPO</key><string>ar9av/FLUX.2-klein-4B-mflux-4bit</string>
