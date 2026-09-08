@@ -3,6 +3,7 @@
 services:
   studio-hub:
     image: ghcr.io/appweb514-svg/studio-hub:latest
+    pull_policy: always
     restart: unless-stopped
     ports:
       - "8000:8000"

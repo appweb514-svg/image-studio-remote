@@ -151,7 +151,9 @@ PASS_THROUGH_GET = ("/api/v1/status", "/api/v1/capabilities", "/api/v1/models",
 @app.get("/api/v1/status")
 def status():
     try:
-        r = worker("GET", "/api/v1/status")
+        # Timeout court : la page de login doit s'afficher vite même si le
+        # worker est injoignable.
+        r = worker("GET", "/api/v1/status", timeout=4)
         return JSONResponse(r.json())
     except Exception as exc:
         return JSONResponse({
