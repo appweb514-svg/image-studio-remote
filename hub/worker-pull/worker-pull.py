@@ -194,8 +194,6 @@ def run_job(job):
         "--model", params.get("model_repo") or spec["repo"],
         "--base-model", spec["base_model"],
         "--prompt", params.get("prompt", ""),
-        "--width", str(params.get("width") or 512),
-        "--height", str(params.get("height") or 512),
         "--steps", str(default_steps),
         "--guidance", str(params.get("guidance") or 1.0),
         "--seed", str(seed),
@@ -203,6 +201,11 @@ def run_job(job):
         "--stepwise-image-output-dir", str(stepwise),
         "--metadata",
     ]
+    if not edit:
+        # Hors édition : dimensions explicites. En édition : taille source
+        # native (défaut du CLI) pour préserver les détails.
+        args += ["--width", str(params.get("width") or 512),
+                 "--height", str(params.get("height") or 512)]
     if not edit and params.get("negative_prompt"):
         args += ["--negative-prompt", params["negative_prompt"]]
     if edit:
