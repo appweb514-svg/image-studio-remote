@@ -36,7 +36,6 @@ def main():
 
     image = pipe(
         prompt=args.prompt,
-        negative_prompt=args.negative_prompt or None,
         height=args.height, width=args.width,
         guidance_scale=1.0,
         num_inference_steps=args.steps,

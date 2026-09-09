@@ -216,7 +216,7 @@ STATIC_CAPABILITIES = {
         {"id": "flux2-klein-4b-sdnq-4bit", "family": "flux",
          "display_name": "FLUX.2 Klein 4B SDNQ 4-bit (Disty0)",
          "is_distilled": True, "default_steps": 4, "default_guidance": 1.0,
-         "supports_negative_prompt": True, "recommended_quantize": 4,
+         "supports_negative_prompt": False, "recommended_quantize": 4,
          "approximate_size_gb": 5.1},
     ],
     "quantize_options": [0, 3, 4, 6, 8],
