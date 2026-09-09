@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { useEvents } from "../sse";
 import { useToast } from "../components/Toast";
@@ -26,8 +26,114 @@ function formatDuration(seconds: number): string {
   return `${rounded} s`;
 }
 
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("Lecture impossible"));
+        return;
+      }
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(new Error("Lecture impossible"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function CompareSlider({
+  beforeSrc,
+  afterSrc,
+  afterAlt,
+  onBeforeError,
+}: {
+  beforeSrc: string;
+  afterSrc: string;
+  afterAlt: string;
+  onBeforeError: () => void;
+}) {
+  const [pos, setPos] = useState(50);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const draggingRef = useRef(false);
+
+  const updateFromClientX = useCallback((clientX: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const pct = ((clientX - rect.left) / rect.width) * 100;
+    setPos(Math.min(98, Math.max(2, pct)));
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      className="compare-wrap"
+      style={{ touchAction: "none" }}
+      onPointerDown={(e) => {
+        draggingRef.current = true;
+        (e.currentTarget as HTMLDivElement).setPointerCapture?.(e.pointerId);
+        updateFromClientX(e.clientX);
+      }}
+      onPointerMove={(e) => {
+        if (draggingRef.current) updateFromClientX(e.clientX);
+      }}
+      onPointerUp={() => {
+        draggingRef.current = false;
+      }}
+      onPointerCancel={() => {
+        draggingRef.current = false;
+      }}
+    >
+      <img src={afterSrc} alt={afterAlt} className="compare-base" draggable={false} />
+      <img
+        src={beforeSrc}
+        alt=""
+        aria-hidden
+        className="compare-before"
+        draggable={false}
+        style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}
+        onError={onBeforeError}
+      />
+      <div className="compare-divider" style={{ left: `${pos}%` }} aria-hidden>
+        <span className="compare-handle">↔</span>
+      </div>
+      <div
+        className="compare-grip"
+        role="slider"
+        tabIndex={0}
+        aria-label="Curseur de comparaison avant après"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(pos)}
+        style={{ left: `${pos}%` }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            setPos((p) => Math.max(2, p - 4));
+          } else if (e.key === "ArrowRight") {
+            e.preventDefault();
+            setPos((p) => Math.min(98, p + 4));
+          } else if (e.key === "Home") {
+            e.preventDefault();
+            setPos(2);
+          } else if (e.key === "End") {
+            e.preventDefault();
+            setPos(98);
+          }
+        }}
+      />
+      <span className="compare-label compare-label-before">AVANT</span>
+      <span className="compare-label compare-label-after">APRÈS</span>
+    </div>
+  );
+}
+
 export function GalleryPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [items, setItems] = useState<GalleryItemDTO[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [familyFilter, setFamilyFilter] = useState("all");
@@ -37,6 +143,8 @@ export function GalleryPage() {
   const [upscaleItem, setUpscaleItem] = useState<GalleryItemDTO | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const [boardFilter, setBoardFilter] = useState<string>("all");
+  const [chainingId, setChainingId] = useState<string | null>(null);
+  const [comparing, setComparing] = useState(false);
 
   // deep link ?board=<name> (e.g. from the UpScaler "Terminé" toast)
   useEffect(() => {
@@ -95,10 +203,24 @@ export function GalleryPage() {
   );
 
   const current = viewerIndex !== null ? filtered[viewerIndex] : undefined;
+  const currentSourceIds = current?.metadata?.source_image_ids;
+  const compareSourceId =
+    currentSourceIds && currentSourceIds.length > 0 ? currentSourceIds[0] : undefined;
+  const canCompare = !!compareSourceId;
+  const compareBeforeSrc = compareSourceId
+    ? `/api/v1/images/${encodeURIComponent(compareSourceId)}`
+    : "";
+
+  // Quitter le mode comparaison dès que l'épreuve change.
+  useEffect(() => {
+    setComparing(false);
+    setZoom(1);
+  }, [current?.id]);
 
   const closeViewer = () => {
     setViewerIndex(null);
     setZoom(1);
+    setComparing(false);
   };
   const step = useCallback(
     (delta: number) => {
@@ -108,6 +230,7 @@ export function GalleryPage() {
         return next;
       });
       setZoom(1);
+      setComparing(false);
     },
     [filtered.length],
   );
@@ -166,6 +289,32 @@ export function GalleryPage() {
       toast("Copie impossible", "error");
     }
   };
+
+  const useAsInput = async (item: GalleryItemDTO) => {
+    if (chainingId) return;
+    setChainingId(item.id);
+    try {
+      const res = await fetch(item.url, { credentials: "same-origin" });
+      if (!res.ok) throw new Error(`Téléchargement impossible (${res.status})`);
+      const blob = await res.blob();
+      const mime = blob.type || "image/jpeg";
+      const dataBase64 = await blobToBase64(blob);
+      const filename = item.filename || `entree-${item.id.slice(0, 8)}.jpg`;
+      const { path } = await api.upload(filename, mime, dataBase64);
+      navigate("/", {
+        state: { chainedImage: { uploadPath: path, galleryId: item.id, previewUrl: item.url } },
+      });
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : "Liaison impossible", "error");
+    } finally {
+      setChainingId(null);
+    }
+  };
+
+  const handleCompareError = useCallback(() => {
+    setComparing(false);
+    toast("Image source introuvable — comparaison impossible", "error");
+  }, [toast]);
 
   return (
     <div className="page">
@@ -264,10 +413,12 @@ export function GalleryPage() {
           <div
             className="viewer-stage"
             onWheel={(e) => {
+              if (comparing) return;
               e.preventDefault();
               setZoom((z) => Math.min(8, Math.max(1, z - Math.sign(e.deltaY) * 0.25)));
             }}
             onTouchMove={(e) => {
+              if (comparing) return;
               // crude two-finger pinch zoom
               if (e.touches.length === 2) {
                 const dx = e.touches[0].clientX - e.touches[1].clientX;
@@ -277,11 +428,32 @@ export function GalleryPage() {
               }
             }}
           >
-            <img
-              src={current.url}
-              alt={current.filename}
-              style={{ transform: `scale(${zoom})` }}
-            />
+            {comparing && canCompare ? (
+              <CompareSlider
+                beforeSrc={compareBeforeSrc}
+                afterSrc={current.url}
+                afterAlt={current.filename}
+                onBeforeError={handleCompareError}
+              />
+            ) : (
+              <img
+                src={current.url}
+                alt={current.filename}
+                style={{ transform: `scale(${zoom})` }}
+              />
+            )}
+          </div>
+          <div className="viewer-toolbar" role="toolbar" aria-label="Outils de visualisation">
+            {canCompare && (
+              <button
+                type="button"
+                className={`btn btn-chip${comparing ? " active" : ""}`}
+                onClick={() => setComparing((v) => !v)}
+                aria-pressed={comparing}
+              >
+                Comparer
+              </button>
+            )}
           </div>
           <button className="viewer-nav viewer-prev" onClick={() => step(-1)} aria-label="Précédente">
             ‹
@@ -391,6 +563,27 @@ export function GalleryPage() {
               </button>
               <button className="btn btn-chip" onClick={() => void doAction(current, "variation")}>
                 Générer une variation
+              </button>
+              <button
+                className="btn btn-chip"
+                onClick={() => void useAsInput(current)}
+                disabled={chainingId === current.id}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                </svg>
+                {chainingId === current.id ? "Liaison…" : "Utiliser comme entrée"}
               </button>
               <button className="btn btn-chip" onClick={() => void copyPrompt(current.metadata?.prompt)}>
                 Copier le prompt

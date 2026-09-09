@@ -92,6 +92,7 @@ export interface ImageMetadata {
   loras: string[];
   enhanced_prompt?: string;
   generation_seconds?: number;
+  source_image_ids?: string[] | null;
 }
 
 export interface GalleryItemDTO {
@@ -160,6 +161,7 @@ export interface GenerateRequest {
   image_strength?: number;
   edit_mode?: boolean;
   edit_image_paths?: string[];
+  edit_source_ids?: string[];
   loras?: { path: string; strength?: number; enabled?: boolean }[];
   fast_mode?: boolean;
   enhance_prompt?: boolean;

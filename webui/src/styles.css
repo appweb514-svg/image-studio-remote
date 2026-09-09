@@ -2248,3 +2248,164 @@ td.mono {
     filter: none;
   }
 }
+
+/* ---------- retouches rapides : pastilles d'atelier ---------- */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.instruction-chip {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  padding: 4px 11px;
+  transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+}
+.instruction-chip:hover {
+  border-color: var(--amber-line);
+  background: rgba(216, 162, 74, 0.07);
+  color: var(--amber-hover);
+}
+.instruction-chip:active {
+  transform: translateY(1px);
+}
+.chained-hint {
+  margin: 0;
+}
+.chained-tag {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--amber-hover);
+  border: 1px solid var(--amber-line);
+  border-radius: 3px;
+  padding: 1px 6px;
+  background: var(--amber-dim);
+}
+
+/* ---------- table lumineuse : barre d'outils ---------- */
+.viewer-toolbar {
+  position: absolute;
+  top: 14px;
+  left: 64px;
+  z-index: 6;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.viewer-toolbar .btn-chip {
+  background: rgba(10, 9, 8, 0.88);
+}
+.viewer-toolbar .btn-chip.active {
+  border-color: var(--amber);
+  color: var(--amber-hover);
+  background: rgba(216, 162, 74, 0.14);
+}
+
+/* ---------- comparaison avant / après ---------- */
+.compare-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  max-height: 100%;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background: #000;
+  border: 1px solid rgba(236, 231, 223, 0.2);
+  outline: 1px solid rgba(236, 231, 223, 0.06);
+  outline-offset: 10px;
+}
+.compare-base {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 220px);
+  width: auto;
+  height: auto;
+}
+.compare-before {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.compare-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--amber);
+  box-shadow: 0 0 12px rgba(216, 162, 74, 0.55);
+  pointer-events: none;
+  z-index: 2;
+}
+.compare-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--amber);
+  background: rgba(10, 9, 8, 0.92);
+  color: var(--amber-hover);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+}
+.compare-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 44px;
+  margin-left: -22px;
+  cursor: ew-resize;
+  z-index: 3;
+}
+.compare-label {
+  position: absolute;
+  top: 10px;
+  z-index: 4;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  background: rgba(10, 9, 8, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 8px;
+  pointer-events: none;
+}
+.compare-label-before {
+  left: 10px;
+}
+.compare-label-after {
+  right: 10px;
+  color: var(--amber-hover);
+  border-color: var(--amber-line);
+}
+
+@media (max-width: 720px) {
+  .viewer-toolbar {
+    left: 60px;
+    right: 12px;
+  }
+  .compare-base {
+    max-height: 46vh;
+  }
+}

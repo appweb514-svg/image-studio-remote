@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { useEvents } from "../sse";
 import { useToast } from "../components/Toast";
@@ -70,10 +71,30 @@ interface EditImage {
   base64: string;
   filename: string;
   path: string | null;
+  previewUrl?: string;
+  sourceId?: string;
 }
+
+interface ChainedImageState {
+  uploadPath: string;
+  galleryId: string;
+  previewUrl?: string;
+}
+
+const EDIT_CHIPS = [
+  "Temps orageux",
+  "Lumière dorée du soir",
+  "Neige d'hiver",
+  "Textures haute résolution",
+  "Vue trois-quarts",
+  "Fond flouté",
+  "Style cinématographique",
+];
 
 export function GeneratePage() {
   const toast = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [presets, setPresets] = useState<Presets | null>(null);
 
@@ -97,7 +118,9 @@ export function GeneratePage() {
   const [imageStrength, setImageStrength] = useState(0.6);
   const [mode, setMode] = useState<"generate" | "edit">("generate");
   const [editImages, setEditImages] = useState<EditImage[]>([]);
+  const [editSourceIds, setEditSourceIds] = useState<string[]>([]);
   const editFileInputRef = useRef<HTMLInputElement | null>(null);
+  const chainedConsumedRef = useRef<string | null>(null);
   const [fastMode, setFastMode] = useState(false);
   const [enhancePrompt, setEnhancePrompt] = useState(false);
 
@@ -156,6 +179,56 @@ export function GeneratePage() {
     () => caps?.models.find((m) => m.id === modelId),
     [caps, modelId],
   );
+
+  // Chaining depuis la galerie : { chainedImage: { uploadPath, galleryId, previewUrl } }
+  const chainedImage = (location.state as { chainedImage?: ChainedImageState } | null)
+    ?.chainedImage;
+  useEffect(() => {
+    if (!chainedImage) return;
+    const key = `${chainedImage.galleryId}:${chainedImage.uploadPath}`;
+    if (chainedConsumedRef.current === key) return;
+    chainedConsumedRef.current = key;
+    setMode("edit");
+    setEditSourceIds((prev) =>
+      prev.includes(chainedImage.galleryId) ? prev : [...prev, chainedImage.galleryId],
+    );
+    setEditImages((prev) => {
+      if (prev.some((p) => p.path === chainedImage.uploadPath)) return prev;
+      const rawName =
+        chainedImage.previewUrl?.split("/").pop()?.split("?")[0] ||
+        `entree-${chainedImage.galleryId.slice(0, 8)}.jpg`;
+      const entry: EditImage = {
+        base64: "",
+        filename: rawName,
+        path: chainedImage.uploadPath,
+        previewUrl: chainedImage.previewUrl,
+        sourceId: chainedImage.galleryId,
+      };
+      return [entry, ...prev].slice(0, Math.max(1, maxEditImages || 4));
+    });
+    toast("Image liée — mode édition", "success");
+    navigate(location.pathname, { replace: true, state: {} });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainedImage]);
+
+  // Si la famille courante ne supporte pas l'édition alors qu'une source liée
+  // existe, basculer vers la première famille éditable.
+  useEffect(() => {
+    if (!caps || editSourceIds.length === 0) return;
+    if (selectedFamily?.supports_edit) return;
+    const editable = caps.families.find((f) => f.web_enqueue && f.supports_edit);
+    if (editable) {
+      setFamily(editable.id);
+      const first = caps.models.find((m) => m.family === editable.id);
+      if (first) {
+        setModelId(first.id);
+        setSteps(first.default_steps);
+        setGuidance(first.default_guidance);
+        setQuantize(first.recommended_quantize);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caps, editSourceIds]);
 
   // apply model defaults + presets when switching model
   const applyModelDefaults = (id: string) => {
@@ -229,6 +302,27 @@ export function GeneratePage() {
     });
   };
 
+  const removeEditImage = (index: number) => {
+    setEditImages((prev) => {
+      const removed = prev[index];
+      const next = prev.filter((_, j) => j !== index);
+      if (removed?.sourceId) {
+        const stillUsed = next.some((x) => x.sourceId === removed.sourceId);
+        if (!stillUsed) {
+          setEditSourceIds((ids) => ids.filter((id) => id !== removed.sourceId));
+        }
+      }
+      return next;
+    });
+  };
+
+  const appendChip = (chip: string) => {
+    setPrompt((prev) => {
+      if (!prev || prev.trim() === "") return chip;
+      return `${prev.trimEnd()} ${chip}`;
+    });
+  };
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!caps || submitting) return;
@@ -270,6 +364,7 @@ export function GeneratePage() {
         }
         body.edit_mode = true;
         body.edit_image_paths = paths;
+        if (editSourceIds.length > 0) body.edit_source_ids = [...editSourceIds];
         body.batch = 1;
       } else {
         let finalImagePath = imagePath;
@@ -459,6 +554,25 @@ export function GeneratePage() {
               onChange={(e) => setCustomRepo(e.target.value)}
             />
           </label>
+
+          {isEdit && (
+            <div className="field">
+              <span>Retouches rapides</span>
+              <div className="chip-row" role="group" aria-label="Instructions rapides">
+                {EDIT_CHIPS.map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    className="instruction-chip"
+                    onClick={() => appendChip(chip)}
+                    title={`Ajouter « ${chip} »`}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <label className="field">
             <span>{isEdit ? "Instruction" : "Prompt"}</span>
@@ -743,6 +857,11 @@ export function GeneratePage() {
           {isEdit ? (
             <div className="field">
               <span>Images d'entrée ({editImages.length}/{maxEditImages})</span>
+              {editSourceIds.length > 0 && (
+                <p className="muted hint chained-hint">
+                  Entrée liée depuis la galerie — filiation conservée.
+                </p>
+              )}
               {editImages.length === 0 && (
                 <p className="muted hint">Ajoutez de 1 à {maxEditImages} images à éditer.</p>
               )}
@@ -750,11 +869,16 @@ export function GeneratePage() {
                 <div className="inline edit-image-row" key={`${img.filename}-${i}`}>
                   <img
                     className="edit-thumb"
-                    src={`data:image/jpeg;base64,${img.base64}`}
+                    src={
+                      img.previewUrl
+                        ? img.previewUrl
+                        : `data:image/jpeg;base64,${img.base64}`
+                    }
                     alt={`Image ${i + 1}`}
                     width={72}
                   />
                   <span className="muted mono">#{i + 1}</span>
+                  {img.sourceId && <span className="muted mono chained-tag">liée</span>}
                   <button
                     type="button"
                     className="btn btn-chip"
@@ -776,7 +900,7 @@ export function GeneratePage() {
                   <button
                     type="button"
                     className="btn btn-chip"
-                    onClick={() => setEditImages((prev) => prev.filter((_, j) => j !== i))}
+                    onClick={() => removeEditImage(i)}
                     aria-label="Retirer"
                   >
                     ✕
