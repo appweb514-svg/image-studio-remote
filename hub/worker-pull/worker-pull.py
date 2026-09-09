@@ -260,12 +260,13 @@ def run_job(job):
         pass
 
     finish_job(job_id, params, out_file, seed, enhanced,
-                 fast_mode, upscale_factor, stepwise, code, "mflux")
+                 fast_mode, upscale_factor, stepwise, code, "mflux", t_start)
     shutil.rmtree(stepwise, ignore_errors=True)
 
 
 def finish_job(job_id, params, out_file, seed, enhanced,
-               fast_mode, upscale_factor, stepwise, code, runner_label):
+               fast_mode, upscale_factor, stepwise, code, runner_label,
+               t_start=None):
     if code == 0 and out_file.exists():
         final_path = out_file
         if fast_mode:
@@ -346,7 +347,7 @@ def run_sdnq_job(job_id, params, spec, fast_mode, upscale_factor, enhanced):
     finally:
         pass
     finish_job(job_id, params, out_file, seed, enhanced,
-               fast_mode, upscale_factor, stepwise, code, "sdnq")
+               fast_mode, upscale_factor, stepwise, code, "sdnq", t_start)
     shutil.rmtree(stepwise, ignore_errors=True)
 
 
