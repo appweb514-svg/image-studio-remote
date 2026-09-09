@@ -313,9 +313,10 @@ def run_sdnq_job(job_id, params, spec, fast_mode, upscale_factor, enhanced):
                             text=True, bufsize=1)
     last_sent_step = 0
     last_cancel_check = 0.0
+    sdnq_step_re = re.compile(r"^STEP (\d+)/(\d+)")
     try:
         for line in proc.stdout:
-            m = STEP_RE.search(line)
+            m = sdnq_step_re.search(line.strip())
             if m:
                 step, total = int(m.group(1)), int(m.group(2))
                 if total and 0 < step <= total and step != last_sent_step:
