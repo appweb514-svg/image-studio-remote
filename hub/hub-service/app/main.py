@@ -655,6 +655,8 @@ def worker_complete(job_id: str, request: Request, body: dict):
             params = dict(params, enhanced_prompt=body["enhanced_prompt"])
         if body.get("generation_seconds") is not None:
             params = dict(params, generation_seconds=body["generation_seconds"])
+        if body.get("edit_source_ids"):
+            params = dict(params, edit_source_ids=body["edit_source_ids"])
         conn.execute(
             """INSERT INTO images (id, filename, path, board, source, prompt,
                negative_prompt, model, seed, width, height, steps, guidance,
@@ -772,6 +774,7 @@ def image_dto(row):
             "quantize": None, "loras": [],
             "enhanced_prompt": meta_extra.get("enhanced_prompt"),
             "generation_seconds": meta_extra.get("generation_seconds"),
+            "source_image_ids": meta_extra.get("edit_source_ids"),
         },
     }
 

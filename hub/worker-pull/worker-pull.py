@@ -287,6 +287,8 @@ def finish_job(job_id, params, out_file, seed, enhanced,
             image_b64 = base64.b64encode(f.read()).decode()
         payload = {"image_b64": image_b64, "seed": seed,
                    "generation_seconds": round(time.time() - t_start, 1)}
+        if params.get("edit_source_ids"):
+            payload["edit_source_ids"] = params["edit_source_ids"]
         if enhanced:
             payload["enhanced_prompt"] = enhanced
         hub("POST", f"/api/v1/worker/jobs/{job_id}/complete",
