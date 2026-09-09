@@ -16,6 +16,16 @@ function formatDate(iso: string): string {
   }
 }
 
+function formatDuration(seconds: number): string {
+  const rounded = Math.round(seconds);
+  if (rounded >= 60) {
+    const mins = Math.floor(rounded / 60);
+    const secs = String(rounded % 60).padStart(2, "0");
+    return `${mins} min ${secs}`;
+  }
+  return `${rounded} s`;
+}
+
 export function GalleryPage() {
   const toast = useToast();
   const [items, setItems] = useState<GalleryItemDTO[]>([]);
@@ -360,6 +370,12 @@ export function GalleryPage() {
                 <>
                   <dt>Quant.</dt>
                   <dd>{current.metadata.quantize} bit</dd>
+                </>
+              )}
+              {current.metadata?.generation_seconds !== undefined && (
+                <>
+                  <dt>Durée</dt>
+                  <dd>{formatDuration(current.metadata.generation_seconds)}</dd>
                 </>
               )}
               {current.metadata?.loras?.length ? (

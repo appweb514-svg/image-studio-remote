@@ -137,7 +137,7 @@ export function GeneratePage() {
   const maxEditImages = selectedFamily?.max_edit_images ?? 4;
   const supportsFastMode = selectedFamily?.supports_fast_mode ?? false;
   const supportsPromptEnhance = selectedFamily?.supports_prompt_enhance ?? false;
-  const fastModeNote = selectedFamily?.fast_mode_note ?? "384px + upscale ×4";
+  const fastModeNote = selectedFamily?.fast_mode_note ?? "512px + upscale ×2";
   const promptEnhanceNote = selectedFamily?.prompt_enhance_note ?? "Qwen3.5 local";
 
   // Les options retombent à OFF dès que la famille ne les supporte plus.
@@ -561,7 +561,7 @@ export function GeneratePage() {
           </div>
           {supportsFastMode && fastMode && !isEdit && (
             <p className="muted hint dim-hint">
-              Sortie upscalée ×4 — génération à 384px puis agrandissement (Superscale).
+              Sortie upscalée ×2 — génération à 512px puis agrandissement (Superscale).
             </p>
           )}
 

@@ -91,6 +91,7 @@ export interface ImageMetadata {
   quantize?: number;
   loras: string[];
   enhanced_prompt?: string;
+  generation_seconds?: number;
 }
 
 export interface GalleryItemDTO {
