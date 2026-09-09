@@ -183,17 +183,21 @@ STATIC_CAPABILITIES = {
     "families": [{"id": "flux", "display_name": "FLUX.2", "web_enqueue": True,
                   "supports_edit": True, "max_edit_images": 4,
                   "supports_fast_mode": True, "supports_prompt_enhance": True,
-                  "fast_mode_note": "Génération 384px + upscale Superscale x4 (Neural Engine)",
+                  "fast_mode_note": "Génération 512px + upscale Superscale x2 (Neural Engine)",
                   "prompt_enhance_note": "Réécriture du prompt par Qwen3.5-4B local"},
                  {"id": "zimage", "display_name": "Z-Image", "web_enqueue": True,
                   "supports_edit": False, "max_edit_images": 0,
                   "supports_fast_mode": True, "supports_prompt_enhance": True,
-                  "fast_mode_note": "Génération 384px + upscale Superscale x4 (Neural Engine)",
+                  "fast_mode_note": "Génération 512px + upscale Superscale x2 (Neural Engine)",
                   "prompt_enhance_note": "Réécriture du prompt par Qwen3.5-4B local"}],
     "models": [
-        {"id": "flux2-klein-4b", "family": "flux", "display_name": "FLUX.2 Klein 4B",
+        {"id": "flux2-klein-4b-q8", "family": "flux", "display_name": "FLUX.2 Klein 4B (Q8)",
          "is_distilled": True, "default_steps": 4, "default_guidance": 1.0,
          "supports_negative_prompt": False, "recommended_quantize": 8,
+         "approximate_size_gb": 8.0},
+        {"id": "flux2-klein-4b", "family": "flux", "display_name": "FLUX.2 Klein 4B (Q4)",
+         "is_distilled": True, "default_steps": 4, "default_guidance": 1.0,
+         "supports_negative_prompt": False, "recommended_quantize": 4,
          "approximate_size_gb": 4.6},
         {"id": "flux2-klein-9b", "family": "flux", "display_name": "FLUX.2 Klein 9B",
          "is_distilled": True, "default_steps": 4, "default_guidance": 1.0,
@@ -649,6 +653,8 @@ def worker_complete(job_id: str, request: Request, body: dict):
         seed = body.get("seed", params.get("seed"))
         if body.get("enhanced_prompt"):
             params = dict(params, enhanced_prompt=body["enhanced_prompt"])
+        if body.get("generation_seconds") is not None:
+            params = dict(params, generation_seconds=body["generation_seconds"])
         conn.execute(
             """INSERT INTO images (id, filename, path, board, source, prompt,
                negative_prompt, model, seed, width, height, steps, guidance,
@@ -765,6 +771,7 @@ def image_dto(row):
             "guidance": row["guidance"], "width": row["width"], "height": row["height"],
             "quantize": None, "loras": [],
             "enhanced_prompt": meta_extra.get("enhanced_prompt"),
+            "generation_seconds": meta_extra.get("generation_seconds"),
         },
     }
 

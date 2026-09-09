@@ -45,6 +45,12 @@ MODEL_REGISTRY = {
         "base_model": "z-image-turbo",
         "default_steps": 8,
     },
+    "flux2-klein-4b-q8": {
+        "repo": "AITRADER/FLUX2-klein-4B-mlx-8bit",
+        "binary": "mflux-generate-flux2",
+        "base_model": "flux2-klein-4b",
+        "default_steps": 4,
+    },
     "flux2-klein-4b-uncensored-q4": {
         "repo": "/Users/gildas/mflux-models/out/klein-4b-uncensored-q4",
         "binary": "mflux-generate-flux2",
@@ -154,6 +160,7 @@ def resolve_input(value):
 
 def run_job(job):
     job_id, params = job["id"], job["params"]
+    t_start = time.time()
     spec = MODEL_REGISTRY.get(params.get("model") or "flux2-klein-4b",
                               MODEL_REGISTRY["flux2-klein-4b"])
     binary_name = spec.get("binary", "")
@@ -163,7 +170,7 @@ def run_job(job):
         binary_name = "mflux-generate-flux2-edit"
     edit = bool(params.get("edit_mode"))
     fast_mode = bool(params.get("fast_mode")) and not edit
-    upscale_factor = int(params.get("upscale_factor") or 4)
+    upscale_factor = int(params.get("upscale_factor") or 2)
     if spec.get("runner") == "sdnq" and params.get("edit_mode"):
         raise RuntimeError("édition non supportée par SDNQ (FLUX.2 uniquement)")
 
@@ -178,11 +185,12 @@ def run_job(job):
             log(f"job {job_id}: enhance échoué ({exc}), prompt d'origine")
 
     if fast_mode:
-        # Basse résolution : long bord plafonné à 384 (rapide), puis upscale.
+        # Basse résolution : long bord plafonné à 512, puis upscale x2 doux
+        # (un x4 dénature trop l'image).
         w, h = int(params.get("width") or 512), int(params.get("height") or 512)
         longest = max(w, h)
-        if longest > 384:
-            scale_down = 384.0 / longest
+        if longest > 512:
+            scale_down = 512.0 / longest
             w, h = max(64, int(w * scale_down) // 8 * 8), max(64, int(h * scale_down) // 8 * 8)
         params = dict(params, width=w, height=h)
         log(f"job {job_id}: mode rapide {w}x{h} puis x{upscale_factor}")
@@ -276,7 +284,8 @@ def finish_job(job_id, params, out_file, seed, enhanced,
                 log(f"job {job_id}: upscale échoué, image d'origine ({proc2.stderr[-200:]})")
         with open(final_path, "rb") as f:
             image_b64 = base64.b64encode(f.read()).decode()
-        payload = {"image_b64": image_b64, "seed": seed}
+        payload = {"image_b64": image_b64, "seed": seed,
+                   "generation_seconds": round(time.time() - t_start, 1)}
         if enhanced:
             payload["enhanced_prompt"] = enhanced
         hub("POST", f"/api/v1/worker/jobs/{job_id}/complete",
@@ -289,6 +298,7 @@ def finish_job(job_id, params, out_file, seed, enhanced,
 
 
 def run_sdnq_job(job_id, params, spec, fast_mode, upscale_factor, enhanced):
+    t_start = time.time()
     seed = params.get("seed")
     if seed is None:
         seed = random.randint(0, 2**31 - 1)
