@@ -44,6 +44,17 @@ for d in (DATA, IMAGES_DIR, UPLOADS_DIR, PREVIEWS_DIR):
 app = FastAPI(title="MLXBits Image Studio hub")
 
 
+@app.middleware("http")
+async def no_store_api(request: Request, call_next):
+    """Pas de cache navigateur sur l'API (capabilities, queue, jobs…) :
+    l'UI doit toujours voir l'état frais, sinon les nouveaux modèles
+    ou jobs n'apparaissent qu'après expiration du cache heuristique."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response
+
+
 # ------------------------------------------------------------------ storage
 
 def db():
