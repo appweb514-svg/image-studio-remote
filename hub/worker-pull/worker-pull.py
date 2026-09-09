@@ -186,6 +186,9 @@ def run_job(job):
             w, h = max(64, int(w * scale_down) // 8 * 8), max(64, int(h * scale_down) // 8 * 8)
         params = dict(params, width=w, height=h)
         log(f"job {job_id}: mode rapide {w}x{h} puis x{upscale_factor}")
+    if spec.get("runner") == "sdnq":
+        run_sdnq_job(job_id, params, spec, fast_mode, upscale_factor, enhanced)
+        return
     seed = params.get("seed")
     if seed is None:
         seed = random.randint(0, 2**31 - 1)
