@@ -156,10 +156,10 @@ def run_job(job):
     job_id, params = job["id"], job["params"]
     spec = MODEL_REGISTRY.get(params.get("model") or "flux2-klein-4b",
                               MODEL_REGISTRY["flux2-klein-4b"])
-    binary_name = spec["binary"]
+    binary_name = spec.get("binary", "")
     if params.get("edit_mode"):
-        if spec["binary"] != "mflux-generate-flux2":
-            raise RuntimeError("édition supportée uniquement sur FLUX.2")
+        if spec.get("runner") == "sdnq" or binary_name != "mflux-generate-flux2":
+            raise RuntimeError("édition supportée uniquement sur FLUX.2 (mflux)")
         binary_name = "mflux-generate-flux2-edit"
     edit = bool(params.get("edit_mode"))
     fast_mode = bool(params.get("fast_mode")) and not edit
