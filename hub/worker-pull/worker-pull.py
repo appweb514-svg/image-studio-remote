@@ -45,6 +45,18 @@ MODEL_REGISTRY = {
         "base_model": "z-image-turbo",
         "default_steps": 8,
     },
+    "flux2-klein-4b-uncensored-q4": {
+        "repo": "/Users/gildas/mflux-models/out/klein-4b-uncensored-q4",
+        "binary": "mflux-generate-flux2",
+        "base_model": "flux2-klein-4b",
+        "default_steps": 4,
+    },
+    "flux2-klein-4b-uncensored-q8": {
+        "repo": "/Users/gildas/mflux-models/out/klein-4b-uncensored-q8",
+        "binary": "mflux-generate-flux2",
+        "base_model": "flux2-klein-4b",
+        "default_steps": 4,
+    },
 }
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "2"))
 STEPWISE_ROOT = BASE / "stepwise"
