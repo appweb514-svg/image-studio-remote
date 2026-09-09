@@ -893,7 +893,10 @@ DIST = Path(os.environ.get("WEBUI_DIST", "/srv/webui"))
 
 @app.get("/")
 def index():
-    return FileResponse(DIST / "index.html")
+    # Jamais de cache sur index.html : c'est lui qui référence le bundle
+    # JS hashé (les assets sous /assets/, eux, sont immuables).
+    return FileResponse(DIST / "index.html",
+                        headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 app.mount("/", StaticFiles(directory=DIST, html=True), name="webui")
