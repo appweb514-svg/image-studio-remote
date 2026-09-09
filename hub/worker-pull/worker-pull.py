@@ -57,6 +57,10 @@ MODEL_REGISTRY = {
         "base_model": "flux2-klein-4b",
         "default_steps": 4,
     },
+    "flux2-klein-4b-sdnq-4bit": {
+        "runner": "sdnq",
+        "default_steps": 4,
+    },
 }
 POLL_INTERVAL = float(os.environ.get("POLL_INTERVAL", "2"))
 STEPWISE_ROOT = BASE / "stepwise"
@@ -160,6 +164,8 @@ def run_job(job):
     edit = bool(params.get("edit_mode"))
     fast_mode = bool(params.get("fast_mode")) and not edit
     upscale_factor = int(params.get("upscale_factor") or 4)
+    if spec.get("runner") == "sdnq" and params.get("edit_mode"):
+        raise RuntimeError("édition non supportée par SDNQ (FLUX.2 uniquement)")
 
     enhanced = None
     if params.get("enhance_prompt") and params.get("prompt"):
@@ -242,10 +248,17 @@ def run_job(job):
     finally:
         pass
 
+    finish_job(job_id, params, out_file, seed, enhanced,
+                 fast_mode, upscale_factor, stepwise, code, "mflux")
+    shutil.rmtree(stepwise, ignore_errors=True)
+
+
+def finish_job(job_id, params, out_file, seed, enhanced,
+               fast_mode, upscale_factor, stepwise, code, runner_label):
     if code == 0 and out_file.exists():
         final_path = out_file
         if fast_mode:
-            post_phase(job_id, f"Upscale x{upscale_factor} (Real-ESRGAN)…")
+            post_phase(job_id, f"Upscale x{upscale_factor} (Superscale)…")
             upscaled = stepwise / "upscaled.png"
             proc2 = subprocess.run(
                 [os.path.expanduser("~/realesrgan-env/bin/python"),
@@ -268,8 +281,58 @@ def run_job(job):
         log(f"job {job_id}: terminé ({len(image_b64) // 1024} Ko envoyés)")
     else:
         hub("POST", f"/api/v1/worker/jobs/{job_id}/fail",
-            {"error": f"mflux exit {code}"})
+            {"error": f"{runner_label} exit {code}"})
         log(f"job {job_id}: échec (exit {code})")
+
+
+def run_sdnq_job(job_id, params, spec, fast_mode, upscale_factor, enhanced):
+    seed = params.get("seed")
+    if seed is None:
+        seed = random.randint(0, 2**31 - 1)
+    default_steps = params.get("steps") or spec["default_steps"]
+    stepwise = STEPWISE_ROOT / job_id
+    stepwise.mkdir(parents=True, exist_ok=True)
+    out_file = stepwise / "output.png"
+    args = [
+        os.path.expanduser("~/sdnq-env/bin/python"),
+        str(Path(__file__).parent / "run_sdnq.py"),
+        "--prompt", params.get("prompt", ""),
+        "--steps", str(default_steps),
+        "--width", str(params.get("width") or 512),
+        "--height", str(params.get("height") or 512),
+        "--seed", str(seed),
+        "--output", str(out_file),
+    ]
+    if params.get("negative_prompt"):
+        args += ["--negative-prompt", params["negative_prompt"]]
+    log(f"job {job_id}: sdnq steps={default_steps} seed={seed}")
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1)
+    last_sent_step = 0
+    last_cancel_check = 0.0
+    try:
+        for line in proc.stdout:
+            m = STEP_RE.search(line)
+            if m:
+                step, total = int(m.group(1)), int(m.group(2))
+                if total and 0 < step <= total and step != last_sent_step:
+                    last_sent_step = step
+                    post_progress(job_id, step, total, stepwise, "",
+                                  width=params.get("width"), height=params.get("height"))
+            now = time.time()
+            if now - last_cancel_check > 2:
+                last_cancel_check = now
+                if check_cancelled(job_id):
+                    log(f"job {job_id}: annulation demandée")
+                    proc.terminate()
+                    hub("POST", f"/api/v1/worker/jobs/{job_id}/fail",
+                        {"error": "__cancelled__"})
+                    return
+        code = proc.wait()
+    finally:
+        pass
+    finish_job(job_id, params, out_file, seed, enhanced,
+               fast_mode, upscale_factor, stepwise, code, "sdnq")
     shutil.rmtree(stepwise, ignore_errors=True)
 
 
