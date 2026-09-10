@@ -488,7 +488,7 @@ def unload_warm(model_id=None):
     gc.collect()
     try:
         import mlx.core as mx
-        mx.metal.clear_cache()
+        (mx.clear_cache if hasattr(mx, "clear_cache") else mx.metal.clear_cache)()
     except Exception as exc:
         log(f"clear_cache ignoré: {exc}")
     if keys:
