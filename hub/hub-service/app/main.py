@@ -230,12 +230,30 @@ STATIC_CAPABILITIES = {
 }
 
 STATIC_MODELS = [
-    {"id": "flux2-klein-4b", "display_name": "FLUX.2 Klein 4B", "family": "flux",
+    {"id": "flux2-klein-4b-q8", "display_name": "FLUX.2 Klein 4B (Q8)", "family": "flux",
+     "on_disk_q8": True, "on_disk_q4": False, "size_gb_q8": 8.0, "size_gb_q4": 0,
+     "repo_url": "https://huggingface.co/AITRADER/FLUX2-klein-4B-mlx-8bit"},
+    {"id": "flux2-klein-4b", "display_name": "FLUX.2 Klein 4B (Q4)", "family": "flux",
      "on_disk_q8": True, "on_disk_q4": True, "size_gb_q8": 8.2, "size_gb_q4": 4.6,
-     "repo_url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B"},
+     "repo_url": "https://huggingface.co/ar9av/FLUX.2-klein-4B-mflux-4bit"},
     {"id": "flux2-klein-9b", "display_name": "FLUX.2 Klein 9B", "family": "flux",
-     "on_disk_q8": False, "on_disk_q4": True, "size_gb_q8": 17.6, "size_gb_q4": 9.8,
+     "on_disk_q8": False, "on_disk_q4": False, "size_gb_q8": 17.6, "size_gb_q4": 9.8,
      "repo_url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B"},
+    {"id": "z-image-turbo", "display_name": "Z-Image Turbo 4-bit", "family": "zimage",
+     "on_disk_q8": False, "on_disk_q4": True, "size_gb_q8": 0, "size_gb_q4": 5.5,
+     "repo_url": "https://huggingface.co/filipstrand/Z-Image-Turbo-mflux-4bit"},
+    {"id": "flux2-klein-4b-uncensored-q4", "family": "flux",
+     "display_name": "FLUX.2 Klein 4B uncensored (Q4)",
+     "on_disk_q8": False, "on_disk_q4": True, "size_gb_q8": 0, "size_gb_q4": 4.3,
+     "repo_url": "https://huggingface.co/ponpoke/flux2-klein-4b-uncensored-text-encoder"},
+    {"id": "flux2-klein-4b-uncensored-q8", "family": "flux",
+     "display_name": "FLUX.2 Klein 4B uncensored (Q8)",
+     "on_disk_q8": True, "on_disk_q4": False, "size_gb_q8": 8.0, "size_gb_q4": 0,
+     "repo_url": "https://huggingface.co/ponpoke/flux2-klein-4b-uncensored-text-encoder"},
+    {"id": "flux2-klein-4b-sdnq-4bit", "family": "flux",
+     "display_name": "FLUX.2 Klein 4B SDNQ 4-bit (Disty0)",
+     "on_disk_q8": False, "on_disk_q4": True, "size_gb_q8": 0, "size_gb_q4": 5.1,
+     "repo_url": "https://huggingface.co/Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic"},
 ]
 
 UPSCALE_MODELS = [
@@ -303,6 +321,8 @@ def status():
     system = hub_system()
     system["loaded_model"] = info.get("model")
     system["loaded_model_memory_gb"] = info.get("model_memory_gb")
+    system["llm"] = {"loaded": bool(info.get("llm_loaded")),
+                     "model": info.get("llm_model")}
     system["queue_length"] = pending
     versions = {"app": "hub-2.0"}
     if info.get("mflux"):
@@ -562,6 +582,24 @@ def recover_stale_jobs(conn):
     return len(rows)
 
 
+@app.post("/api/v1/worker/models/unload")
+def worker_unload(request: Request, body: dict):
+    """Demande à l'agent de libérer un modèle résident (ex: LLM Qwen).
+    Les modèles mflux ne sont jamais résidents (chargés par run)."""
+    require_auth(request)
+    target = (body.get("target") or "llm").strip().lower()
+    if target not in ("llm",):
+        raise HTTPException(400, "cible inconnue (llm uniquement)")
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO worker_state (key, value, updated_at) VALUES
+               ('pending_command', ?, ?) ON CONFLICT(key) DO UPDATE SET
+               value=excluded.value, updated_at=excluded.updated_at""",
+            (json.dumps({"cmd": "unload_llm"}), time.time()),
+        )
+    return {"ok": True, "queued": "unload_llm"}
+
+
 @app.get("/api/v1/worker/jobs/next")
 def worker_next(request: Request):
     require_worker(request)
@@ -575,10 +613,20 @@ def worker_next(request: Request):
             return JSONResponse({"job": None})
         conn.execute("UPDATE worker_jobs SET status='running', updated_at=? WHERE id=?",
                      (time.time(), row["id"]))
+        cmd_row = conn.execute("SELECT value FROM worker_state WHERE key='pending_command'").fetchone()
+    commands = []
+    if cmd_row:
+        try:
+            commands = [json.loads(cmd_row["value"])]
+        except Exception:
+            pass
+        with db() as conn2:
+            conn2.execute("DELETE FROM worker_state WHERE key='pending_command'")
     emit_local("jobStarted", {"job_id": row["id"], "family": "flux",
                               "total_steps": json.loads(row["params_json"] or "{}").get("steps", 4)})
     emit_local("queueChanged", {})
-    return {"job": {"id": row["id"], "params": json.loads(row["params_json"] or "{}")}}
+    return {"job": {"id": row["id"], "params": json.loads(row["params_json"] or "{}")},
+            "commands": commands}
 
 
 @app.get("/api/v1/worker/jobs/{job_id}/status")

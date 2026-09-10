@@ -353,6 +353,24 @@ def run_sdnq_job(job_id, params, spec, fast_mode, upscale_factor, enhanced):
     shutil.rmtree(stepwise, ignore_errors=True)
 
 
+def run_command(cmd):
+    name = (cmd or {}).get("cmd")
+    if name == "unload_llm":
+        if "model" in _llm:
+            del _llm["model"]
+            _llm.pop("tok", None)
+            import gc
+            gc.collect()
+            try:
+                import mlx.core as mx
+                mx.metal.clear_cache()
+            except Exception as exc:
+                log(f"clear_cache ignoré: {exc}")
+            log("LLM déchargé de la RAM")
+        else:
+            log("unload_llm: rien en mémoire")
+
+
 preview_state = [""]
 
 
@@ -398,9 +416,13 @@ def main():
     while True:
         try:
             hub("POST", "/api/v1/worker/heartbeat",
-                {"model": MODEL_REPO, "mflux": "0.19.1", "model_memory_gb": 4.8})
+                {"model": MODEL_REPO, "mflux": "0.19.1", "model_memory_gb": 4.8,
+                 "llm_loaded": "model" in _llm,
+                 "llm_model": LLM_MODEL if "model" in _llm else None})
             nxt = hub("GET", "/api/v1/worker/jobs/next", timeout=20)
             failures = 0
+            for cmd in (nxt or {}).get("commands") or []:
+                run_command(cmd)
             job = (nxt or {}).get("job")
             if job:
                 try:
