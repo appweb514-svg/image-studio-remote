@@ -67,6 +67,8 @@ export const api = {
 
   status: () => get<import("./types").SystemStatus>("/status"),
   unloadLlm: () => post<OkResponse>("/worker/models/unload", { target: "llm" }),
+  loadModel: (model: string) => post<OkResponse>("/worker/models/load", { model }),
+  unloadModel: (model: string) => post<OkResponse>("/worker/models/unload", { model }),
   capabilities: () => get<import("./types").Capabilities>("/capabilities"),
   models: () => get<import("./types").ModelRow[]>("/models"),
   presets: () => get<import("./types").Presets>("/presets"),

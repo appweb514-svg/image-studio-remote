@@ -108,6 +108,14 @@ export interface GalleryItemDTO {
   metadata?: ImageMetadata;
 }
 
+export interface WarmModel {
+  id: string;
+  key?: string;
+  family?: string;
+  edit?: boolean;
+  since?: string;
+}
+
 export interface SystemStatus {
   app: string;
   remoteAccess: {
@@ -124,6 +132,7 @@ export interface SystemStatus {
     loaded_model?: string;
     loaded_model_memory_gb?: number;
     llm?: { loaded: boolean; model?: string | null };
+    warm_models?: WarmModel[];
     queue_length: number;
     versions: { app: string; mflux?: string; mac_os?: string };
   };

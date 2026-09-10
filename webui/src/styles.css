@@ -1758,6 +1758,19 @@ td .mono,
 td.mono {
   color: var(--text-muted);
 }
+/* resident-model memory cell (models ledger) */
+.mem-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  white-space: nowrap;
+}
+.mem-status {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
 
 /* ---------- modal ---------- */
 .modal-overlay {
