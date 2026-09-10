@@ -123,6 +123,7 @@ export interface SystemStatus {
     storage: { free_gb: number; total_gb: number };
     loaded_model?: string;
     loaded_model_memory_gb?: number;
+    llm?: { loaded: boolean; model?: string | null };
     queue_length: number;
     versions: { app: string; mflux?: string; mac_os?: string };
   };

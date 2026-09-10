@@ -1,12 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../api";
 import { useToast } from "../components/Toast";
-import type { ModelRow } from "../types";
+import type { ModelRow, SystemStatus } from "../types";
 
 export function ModelsPage() {
   const toast = useToast();
   const [models, setModels] = useState<ModelRow[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [llm, setLlm] = useState<SystemStatus["system"]["llm"]>(undefined);
+  const [unloading, setUnloading] = useState(false);
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      const s = await api.status();
+      setLlm(s.system.llm);
+    } catch {
+      // Keep the previous badge state; the models table owns error reporting.
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -16,11 +27,34 @@ export function ModelsPage() {
       if (!(err instanceof ApiError && err.status === 401))
         toast("Impossible de charger les modèles", "error");
     }
-  }, [toast]);
+    await refreshStatus();
+  }, [toast, refreshStatus]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const unloadLlm = useCallback(async () => {
+    if (
+      !window.confirm(
+        "Libérer ~2,5 Go sur la mini ? Le prochain 'Prompt amélioré' rechargera le modèle (~10 s).",
+      )
+    )
+      return;
+    setUnloading(true);
+    try {
+      await api.unloadLlm();
+      toast("Déchargement demandé", "success");
+      window.setTimeout(() => {
+        setUnloading(false);
+        void refreshStatus();
+      }, 4000);
+    } catch (err) {
+      setUnloading(false);
+      if (!(err instanceof ApiError && err.status === 401))
+        toast(err instanceof Error ? err.message : "Échec du déchargement", "error");
+    }
+  }, [toast, refreshStatus]);
 
   return (
     <div className="page">
@@ -37,6 +71,36 @@ export function ModelsPage() {
       <p className="muted hint">
         Les téléchargements de modèles se font depuis l'application native MLXBits Image Studio.
       </p>
+      <section className="card dash-card" aria-live="polite" style={{ marginBottom: 14 }}>
+        <h2>Mémoire du worker</h2>
+        {llm?.loaded ? (
+          <div className="inline" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+            <span>
+              <span className="charged-dot" aria-hidden="true" />
+              LLM chargé{llm.model ? (
+                <>
+                  {" : "}
+                  <span className="mono">{llm.model}</span>
+                </>
+              ) : null}
+            </span>
+            <button
+              className="btn btn-chip btn-ghost btn-danger-text"
+              onClick={() => void unloadLlm()}
+              disabled={unloading}
+            >
+              {unloading ? "Déchargement…" : "Décharger"}
+            </button>
+          </div>
+        ) : (
+          <p className="muted" style={{ margin: 0 }}>
+            Aucun modèle résident — mémoire libre
+          </p>
+        )}
+        <p className="muted" style={{ margin: "8px 0 0", fontSize: "0.82rem" }}>
+          Les modèles mflux sont chargés à chaque exécution, jamais résidents.
+        </p>
+      </section>
       {!loaded && (
         <div aria-busy="true">
           <p className="skeleton" style={{ height: 220 }} />
