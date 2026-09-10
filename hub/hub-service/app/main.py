@@ -566,6 +566,20 @@ def touch_heartbeat(info: Optional[dict] = None):
 STALE_RUNNING_SECONDS = 15 * 60
 
 
+def take_pending_commands(conn):
+    """Lit + consomme les commandes en attente pour l'agent (même connexion)."""
+    cmd_row = conn.execute(
+        "SELECT value FROM worker_state WHERE key='pending_command'").fetchone()
+    if not cmd_row:
+        return []
+    try:
+        commands = [json.loads(cmd_row["value"])]
+    except Exception:
+        commands = []
+    conn.execute("DELETE FROM worker_state WHERE key='pending_command'")
+    return commands
+
+
 def recover_stale_jobs(conn):
     """Les jobs 'running' sans signe de vie = agent tué/redémarré."""
     rows = conn.execute(
@@ -609,19 +623,12 @@ def worker_next(request: Request):
         row = conn.execute(
             "SELECT * FROM worker_jobs WHERE status='queued' ORDER BY created_at ASC LIMIT 1"
         ).fetchone()
+        commands = take_pending_commands(conn)
         if not row:
-            return JSONResponse({"job": None})
+            return JSONResponse({"job": None, "commands": commands})
         conn.execute("UPDATE worker_jobs SET status='running', updated_at=? WHERE id=?",
                      (time.time(), row["id"]))
-        cmd_row = conn.execute("SELECT value FROM worker_state WHERE key='pending_command'").fetchone()
-    commands = []
-    if cmd_row:
-        try:
-            commands = [json.loads(cmd_row["value"])]
-        except Exception:
-            pass
-        with db() as conn2:
-            conn2.execute("DELETE FROM worker_state WHERE key='pending_command'")
+        commands = take_pending_commands(conn)
     emit_local("jobStarted", {"job_id": row["id"], "family": "flux",
                               "total_steps": json.loads(row["params_json"] or "{}").get("steps", 4)})
     emit_local("queueChanged", {})
