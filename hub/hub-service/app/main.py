@@ -323,6 +323,7 @@ def status():
     system["loaded_model_memory_gb"] = info.get("model_memory_gb")
     system["llm"] = {"loaded": bool(info.get("llm_loaded")),
                      "model": info.get("llm_model")}
+    system["warm_models"] = info.get("warm_models") or []
     system["queue_length"] = pending
     versions = {"app": "hub-2.0"}
     if info.get("mflux"):
@@ -566,17 +567,47 @@ def touch_heartbeat(info: Optional[dict] = None):
 STALE_RUNNING_SECONDS = 15 * 60
 
 
+def queue_command(conn, cmd: dict):
+    """Ajoute une commande à la file de l'agent (poll toutes les 2 s)."""
+    row = conn.execute("SELECT value FROM worker_state WHERE key='pending_commands'").fetchone()
+    try:
+        current = json.loads(row["value"]) if row else []
+        if not isinstance(current, list):
+            current = []
+    except Exception:
+        current = []
+    current.append(cmd)
+    conn.execute(
+        """INSERT INTO worker_state (key, value, updated_at) VALUES
+           ('pending_commands', ?, ?) ON CONFLICT(key) DO UPDATE SET
+           value=excluded.value, updated_at=excluded.updated_at""",
+        (json.dumps(current), time.time()),
+    )
+
+
 def take_pending_commands(conn):
     """Lit + consomme les commandes en attente pour l'agent (même connexion)."""
     cmd_row = conn.execute(
-        "SELECT value FROM worker_state WHERE key='pending_command'").fetchone()
+        "SELECT value FROM worker_state WHERE key='pending_commands'").fetchone()
     if not cmd_row:
-        return []
+        # Migration depuis l'ancien format (commande unique).
+        old = conn.execute(
+            "SELECT value FROM worker_state WHERE key='pending_command'").fetchone()
+        if not old:
+            return []
+        try:
+            commands = [json.loads(old["value"])]
+        except Exception:
+            commands = []
+        conn.execute("DELETE FROM worker_state WHERE key='pending_command'")
+        return commands
     try:
-        commands = [json.loads(cmd_row["value"])]
+        commands = json.loads(cmd_row["value"])
+        if not isinstance(commands, list):
+            commands = []
     except Exception:
         commands = []
-    conn.execute("DELETE FROM worker_state WHERE key='pending_command'")
+    conn.execute("DELETE FROM worker_state WHERE key='pending_commands'")
     return commands
 
 
@@ -605,13 +636,31 @@ def worker_unload(request: Request, body: dict):
     if target not in ("llm",):
         raise HTTPException(400, "cible inconnue (llm uniquement)")
     with db() as conn:
-        conn.execute(
-            """INSERT INTO worker_state (key, value, updated_at) VALUES
-               ('pending_command', ?, ?) ON CONFLICT(key) DO UPDATE SET
-               value=excluded.value, updated_at=excluded.updated_at""",
-            (json.dumps({"cmd": "unload_llm"}), time.time()),
-        )
+        queue_command(conn, {"cmd": "unload_llm"})
     return {"ok": True, "queued": "unload_llm"}
+
+
+@app.post("/api/v1/worker/models/load")
+def worker_model_load(request: Request, body: dict):
+    """Charge un modèle en mémoire sur le worker (manuel)."""
+    require_auth(request)
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(400, "model requis")
+    with db() as conn:
+        queue_command(conn, {"cmd": "load_model", "model": model,
+                             "edit": bool(body.get("edit", False))})
+    return {"ok": True, "queued": "load_model", "model": model}
+
+
+@app.post("/api/v1/worker/models/unload")
+def worker_model_unload(request: Request, body: dict):
+    """Décharge un modèle (ou "all") de la mémoire du worker."""
+    require_auth(request)
+    with db() as conn:
+        queue_command(conn, {"cmd": "unload_model",
+                             "model": body.get("model") or "all"})
+    return {"ok": True, "queued": "unload_model"}
 
 
 @app.get("/api/v1/worker/jobs/next")

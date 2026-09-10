@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -161,6 +162,7 @@ def resolve_input(value):
 def run_job(job):
     job_id, params = job["id"], job["params"]
     t_start = time.time()
+    run_t_start[job_id] = t_start
     spec = MODEL_REGISTRY.get(params.get("model") or "flux2-klein-4b",
                               MODEL_REGISTRY["flux2-klein-4b"])
     binary_name = spec.get("binary", "")
@@ -196,6 +198,16 @@ def run_job(job):
         log(f"job {job_id}: mode rapide {w}x{h} puis x{upscale_factor}")
     if spec.get("runner") == "sdnq":
         run_sdnq_job(job_id, params, spec, fast_mode, upscale_factor, enhanced)
+        run_t_start.pop(job_id, None)
+        return
+    wkey = warm_key(params.get("model") or "flux2-klein-4b", bool(params.get("edit_mode")))
+    with WARM_LOCK:
+        entry = WARM.get(wkey)
+    if entry is not None:
+        try:
+            run_warm_job(job_id, params, spec, entry, fast_mode, upscale_factor, enhanced)
+        finally:
+            run_t_start.pop(job_id, None)
         return
     seed = params.get("seed")
     if seed is None:
@@ -355,6 +367,19 @@ def run_sdnq_job(job_id, params, spec, fast_mode, upscale_factor, enhanced):
 
 def run_command(cmd):
     name = (cmd or {}).get("cmd")
+    if name == "load_model":
+        model = (cmd or {}).get("model", "")
+        edit = bool((cmd or {}).get("edit", False))
+        try:
+            log(f"Chargement {model}…")
+            load_warm(model, edit=edit)
+        except Exception as exc:
+            log(f"load_model échoué: {exc}")
+        return
+    if name == "unload_model":
+        model = (cmd or {}).get("model")
+        unload_warm(None if model in (None, "all") else model)
+        return
     if name == "unload_llm":
         if "model" in _llm:
             del _llm["model"]
@@ -369,6 +394,210 @@ def run_command(cmd):
             log("LLM déchargé de la RAM")
         else:
             log("unload_llm: rien en mémoire")
+
+
+# ------------------------- Pool chaud (modèles résidents) -------------------------
+# Un seul pipeline résident à la fois (16 Go unifiés) : charger en évince
+# le précédent. Les modèles mflux CLI restent le repli quand rien n'est chaud.
+WARM = {}
+WARM_LOCK = threading.Lock()
+
+WARM_FAMILY = {
+    "flux": {
+        "t2i_mod": "mflux.models.flux2.variants.txt2img.flux2_klein",
+        "t2i_cls": "Flux2Klein",
+        "edit_mod": "mflux.models.flux2.variants.edit.flux2_klein_edit",
+        "edit_cls": "Flux2KleinEdit",
+        "latent_mod": "mflux.models.flux2.latent_creator.flux2_latent_creator",
+        "latent_cls": "Flux2LatentCreator",
+        "config": "flux2_klein_4b",
+    },
+    "zimage": {
+        "t2i_mod": "mflux.models.z_image.variants.z_image",
+        "t2i_cls": "ZImage",
+        "edit_mod": None,
+        "edit_cls": None,
+        "latent_mod": "mflux.models.z_image.latent_creator.z_image_latent_creator",
+        "latent_cls": "ZImageLatentCreator",
+        "config": "z_image_turbo",
+    },
+}
+
+MODEL_WARM_FAMILY = {
+    "flux2-klein-4b": "flux",
+    "flux2-klein-4b-q8": "flux",
+    "flux2-klein-4b-uncensored-q4": "flux",
+    "flux2-klein-4b-uncensored-q8": "flux",
+    "z-image-turbo": "zimage",
+}
+
+
+def _import_cls(mod_name, cls_name):
+    import importlib
+    return getattr(importlib.import_module(mod_name), cls_name)
+
+
+def warm_key(model_id, edit=False):
+    return model_id + (":edit" if edit else "")
+
+
+def load_warm(model_id, edit=False):
+    """Charge un modèle en mémoire (manuel, via l'UI)."""
+    if model_id not in MODEL_REGISTRY:
+        raise RuntimeError(f"modèle inconnu: {model_id}")
+    family = MODEL_WARM_FAMILY.get(model_id)
+    if not family:
+        raise RuntimeError(f"pas de mode résident pour {model_id}")
+    key = warm_key(model_id, edit)
+    with WARM_LOCK:
+        if key in WARM:
+            return {"model": model_id, "already": True}
+        evicted = sorted(WARM.keys())
+        WARM.clear()
+        import gc
+        gc.collect()
+        fam = WARM_FAMILY[family]
+        mod = fam["edit_mod"] if edit else fam["t2i_mod"]
+        cls = fam["edit_cls"] if edit else fam["t2i_cls"]
+        if mod is None:
+            raise RuntimeError("édition non supportée pour ce modèle")
+        from mflux.models.common.config.model_config import ModelConfig
+        pipeline = _import_cls(mod, cls)(
+            model_config=getattr(ModelConfig, fam["config"])(),
+            model_path=MODEL_REGISTRY[model_id]["repo"],
+        )
+        import mlx.core as mx
+        mx.eval(pipeline.parameters())
+        WARM[key] = {"pipeline": pipeline, "model_id": model_id,
+                     "family": family, "edit": edit,
+                     "since": time.time()}
+    log(f"modèle résident: {key}" + (f" (évincé: {evicted})" if evicted else ""))
+    return {"model": model_id, "evicted": evicted}
+
+
+def unload_warm(model_id=None):
+    with WARM_LOCK:
+        if model_id in (None, "all"):
+            keys = sorted(WARM.keys())
+            WARM.clear()
+        else:
+            keys = [k for k in WARM if k == model_id or k.startswith(model_id + ":")]
+            for k in keys:
+                del WARM[k]
+    import gc
+    gc.collect()
+    try:
+        import mlx.core as mx
+        mx.metal.clear_cache()
+    except Exception as exc:
+        log(f"clear_cache ignoré: {exc}")
+    if keys:
+        log(f"modèle(s) déchargé(s): {keys}")
+    return keys
+
+
+def warm_snapshot():
+    with WARM_LOCK:
+        return [{"id": v["model_id"], "key": k, "family": v["family"],
+                 "edit": v["edit"], "since": v["since"]}
+                for k, v in WARM.items()]
+
+
+class HubProgressCallback:
+    """Progression live vers le hub + annulation (KeyboardInterrupt propre)."""
+
+    def __init__(self, job_id, total, cancel_flag):
+        self.job_id = job_id
+        self.total = total
+        self.cancel_flag = cancel_flag
+        self.last = 0
+
+    def call_in_loop(self, t, seed, prompt, latents, config, time_steps):
+        if self.cancel_flag["stop"]:
+            raise KeyboardInterrupt()
+        step = t + 1
+        if step != self.last:
+            self.last = step
+            try:
+                hub("POST", f"/api/v1/worker/jobs/{self.job_id}/progress",
+                    {"step": step, "total": self.total})
+            except Exception as exc:
+                log(f"progress ignorée: {exc}")
+
+
+def run_warm_job(job_id, params, spec, entry, fast_mode, upscale_factor, enhanced):
+    from mflux.callbacks.instances.stepwise_handler import StepwiseHandler
+    seed = params.get("seed")
+    if seed is None:
+        seed = random.randint(0, 2**31 - 1)
+    default_steps = params.get("steps") or spec["default_steps"]
+    w, h = int(params.get("width") or 512), int(params.get("height") or 512)
+    guidance = float(params.get("guidance") or 1.0)
+    stepwise = STEPWISE_ROOT / job_id
+    stepwise.mkdir(parents=True, exist_ok=True)
+    out_file = stepwise / "output.png"
+    pipeline = entry["pipeline"]
+    fam = WARM_FAMILY[entry["family"]]
+    latent_cls = _import_cls(fam["latent_mod"], fam["latent_cls"])
+    cancel_flag = {"stop": False}
+    watcher = threading.Thread(target=_warm_cancel_watcher,
+                               args=(job_id, cancel_flag), daemon=True)
+    prog = HubProgressCallback(job_id, default_steps, cancel_flag)
+    stepwise_h = StepwiseHandler(model=pipeline, latent_creator=latent_cls,
+                                 output_dir=str(stepwise))
+    reg = pipeline.callbacks
+    saved = (len(reg.in_loop), len(reg.before_loop), len(reg.interrupt))
+    reg.register(prog)
+    reg.register(stepwise_h)
+    watcher.start()
+    log(f"job {job_id}: {spec.get('base_model', entry['family'])} RÉSIDENT "
+        f"steps={default_steps} seed={seed}")
+    try:
+        kwargs = dict(seed=seed, prompt=params.get("prompt", ""),
+                      num_inference_steps=default_steps,
+                      height=h, width=w, guidance=guidance)
+        if entry["edit"]:
+            paths = [resolve_input(p) for p in (params.get("edit_image_paths") or [])]
+            if not paths:
+                raise RuntimeError("edit_image_paths vide")
+            kwargs["image_paths"] = paths[:4]
+        result = pipeline.generate_image(**kwargs)
+        result.image.save(out_file)
+        code = 0
+    except KeyboardInterrupt:
+        log(f"job {job_id}: annulation demandée (résident)")
+        hub("POST", f"/api/v1/worker/jobs/{job_id}/fail",
+            {"error": "__cancelled__"})
+        return
+    except Exception as exc:
+        log(f"job {job_id}: échec résident ({exc})")
+        hub("POST", f"/api/v1/worker/jobs/{job_id}/fail",
+            {"error": f"résident: {exc}"})
+        return
+    finally:
+        # Retire les callbacks du job (le pipeline est réutilisé).
+        del reg.in_loop[saved[0]:]
+        del reg.before_loop[saved[1]:]
+        del reg.interrupt[saved[2]:]
+    finish_job(job_id, params, out_file, seed, enhanced,
+               fast_mode, upscale_factor, stepwise, code, "résident",
+               run_t_start.get(job_id))
+    shutil.rmtree(stepwise, ignore_errors=True)
+    run_t_start.pop(job_id, None)
+
+
+def _warm_cancel_watcher(job_id, cancel_flag):
+    for _ in range(3600):
+        time.sleep(1.0)
+        try:
+            if check_cancelled(job_id):
+                cancel_flag["stop"] = True
+                return
+        except Exception:
+            pass
+
+
+run_t_start = {}
 
 
 preview_state = [""]
@@ -418,7 +647,8 @@ def main():
             hub("POST", "/api/v1/worker/heartbeat",
                 {"model": MODEL_REPO, "mflux": "0.19.1", "model_memory_gb": 4.8,
                  "llm_loaded": "model" in _llm,
-                 "llm_model": LLM_MODEL if "model" in _llm else None})
+                 "llm_model": LLM_MODEL if "model" in _llm else None,
+                 "warm_models": warm_snapshot()})
             nxt = hub("GET", "/api/v1/worker/jobs/next", timeout=20)
             failures = 0
             for cmd in (nxt or {}).get("commands") or []:
